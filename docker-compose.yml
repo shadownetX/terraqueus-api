@@ -1,0 +1,65 @@
+version: "3"
+
+services:
+
+  #######################################################
+  ###                                                 PHP
+  #######################################################
+  php:
+    container_name: ${APP_NAME}-php
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    user: www-data
+    links:
+      - mysql
+    volumes:
+      - ".:/var/www"
+    env_file:
+      - ${ENV_FILE_DIR}
+    restart: always
+
+  #######################################################
+  ###                                               NGINX
+  #######################################################
+  nginx:
+    container_name: ${APP_NAME}-nginx
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+      - "8443:443"
+    links:
+      - php
+    volumes:
+      - ".:/var/www"
+    env_file:
+      - ${ENV_FILE_DIR}
+    restart: always
+
+  #######################################################
+  ###                                               REDIS
+  #######################################################
+  redis:
+    container_name: ${APP_NAME}-redis
+    image: redis:4-alpine
+    ports:
+      - "6379:6379"
+    env_file:
+      - ${ENV_FILE_DIR}
+    restart: always
+
+    #######################################################
+    ###                                               MYSQL
+    #######################################################
+  mysql:
+    container_name: ${APP_NAME}-mysql
+    image: mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - "./data/db/mysql:/var/lib/mysql"
+    env_file:
+      - ${ENV_FILE_DIR}
+    restart: always
