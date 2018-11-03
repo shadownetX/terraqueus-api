@@ -4,6 +4,3 @@ php:
 
 install:
   - composer install
-
-after_script:
-  - php ./vendor/bin/php-cs-fixer fix src --rules=@Symfony
