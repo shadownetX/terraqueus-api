@@ -17,7 +17,6 @@ services:
       - ".:/var/www"
     env_file:
       - ${ENV_FILE_DIR}
-    restart: always
 
   #######################################################
   ###                                               NGINX
@@ -36,7 +35,6 @@ services:
       - ".:/var/www"
     env_file:
       - ${ENV_FILE_DIR}
-    restart: always
 
   #######################################################
   ###                                               REDIS
@@ -48,18 +46,16 @@ services:
       - "6379:6379"
     env_file:
       - ${ENV_FILE_DIR}
-    restart: always
 
     #######################################################
     ###                                               MYSQL
     #######################################################
   mysql:
     container_name: ${APP_NAME}-mysql
-    image: mysql
+    image: mysql:5.7
     ports:
       - "3306:3306"
     volumes:
       - "./data/db/mysql:/var/lib/mysql"
     env_file:
       - ${ENV_FILE_DIR}
-    restart: always
