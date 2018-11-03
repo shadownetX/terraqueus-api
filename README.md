@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/shadownetX/terraqueus-api.svg?branch=master)](https://travis-ci.org/shadownetX/terraqueus-api)
+
 ## TERRAQUEUS API
 
 **Requirements:**
