@@ -1,0 +1,2821 @@
+- title: "Microsoft Azure serait supérieur à Google Cloud Platform et à AWS en termes de performances réseau"
+  subtitle: "D'après un rapport de ThousandEyes"
+  body: >
+    Lorsque l’on développe un site, en particulier un site à fort trafic, on est forcément amené à se poser la question des ressources consommées par ce dernier afin d’optimiser son temps de réponse. En effet, une page qui met plus de 3-4 secondes à s’afficher rend vite désagréable la navigation et découragera plus d’une personne à venir sur votre site.
+
+    # 1) Principe du cache HTTP
+
+    Le système de cache de Symfony vous permettra de diminuer les temps de réponses de vos pages en utilisant la puissance du cache HTTP tel qu'il est défini dans la <a href="https://fr.wikipedia.org/wiki/Hypertext_Transfer_Protocol" rel="nofollow noreferrer" style="color:#0000ff;">spécification HTTP</a>. Sachez cependant que ce n’est qu’une des solutions possibles.
+
+    Pour augmenter la vitesse d'une application, on peut par exemple:
+    - optimiser l’utilisation de la base de données. Gérer l’espace alloué à la mémoire tampon pour accélérer l’accès aux données les plus souvent demandées, développer des vues et des procédures pour alléger votre serveur par exemple.
+    - Utiliser la mise en cache des <a href="http://php.net/manual/fr/book.opcache.php" rel="nofollow noreferrer" style="color:#0000ff;">OPCodes</a> si vous êtes admin de votre serveur. Pour résumer grossièrement, l’OPCode est le code intermédiaire lors de la transformation de votre code (HTML, PHP …) en code binaire compréhensible par la machine. On trouvera parmi les plus connus APC, XCache ou encore EAccelerator.
+
+    Pour revenir au cache http, expliquons en un peu le principe. Le rôle de la mémoire cache (ou reverse proxy) est d’accepter les requêtes coté client et de les transmettre au serveur. Il va ensuite recevoir les réponses et les transmettre au client. Lors de ces deux étapes, il va mémoriser les requêtes et les réponses associées. Ceci lui permettra lorsque qu’une même requête est demandée, de vous retourner la réponse sans la redemander au serveur. On économise donc du temps et des ressources.
+
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/reverse_proxy.png)](/assets/2013-12-08-symfony-2-cache-http-esi/reverse_proxy.png){: .center-image .no-link-style}
+
+
+    # 2) Le Cache dans Symfony
+
+    Rentrons maintenant dans le vif du sujet. Symfony est équipé d’un reverse proxy défini par la classe AppCache.php qui se situe dans app/AppCache.php de votre projet.
+
+    Sa mise en place dans Symfony est relativement simple.
+
+    Il vous faut dans un premier temps modifier votre app_dev.php afin qu’il ressemble à ceci :
+
+    ```php
+    <?php
+
+    use Symfony\Component\HttpFoundation\Request;
+    use Symfony\Component\Debug\Debug;
+
+    // If you don't want to setup permissions the proper way, just uncomment the following PHP line
+
+    // read http://symfony.com/doc/current/book/installation.html#configuration-and-setup for more information
+
+    //umask(0000);
+    // This check prevents access to debug front controllers that are deployed by accident to production servers.
+
+    // Feel free to remove this, extend it, or make something more sophisticated.
+
+    if (isset($_SERVER['HTTP_CLIENT_IP'])
+        || isset($_SERVER['HTTP_X_FORWARDED_FOR'])
+        || !in_array(@$_SERVER['REMOTE_ADDR'], array('127.0.0.1', 'fe80::1', '::1'))
+    ) {
+        header('HTTP/1.0 403 Forbidden');
+        exit('You are not allowed to access this file. Check '.basename(__FILE__).' for more information.');
+    }
+
+    $loader = require_once __DIR__.'/../app/bootstrap.php.cache';
+
+    Debug::enable();
+
+    require_once __DIR__.'/../app/AppKernel.php';
+    require_once __DIR__.'/../app/AppCache.php';
+
+    $kernel = new AppKernel('dev', true);
+    $kernel->loadClassCache();
+    $kernel = new AppCache($kernel);
+    Request::enableHttpMethodParameterOverride();
+    $request = Request::createFromGlobals();
+    $response = $kernel->handle($request);
+    $response->send();
+    $kernel->terminate($request, $response);
+    ```
+
+    Et c’est tout? Eh ben oui, c’est pas plus compliqué que ça. Rajoutez votre dépendance à AppCache et instanciez là avec en paramètre votre kernel.
+
+    ## Exemple 1 : Utilisation simple
+
+    Maintenant, on va dans un premier temps créer un exemple sans activer le cache.
+
+    Pour le routing:
+    ```yaml
+    #app/config/routing.yml
+    cache:
+        resource: "@MyBundle/Resources/config/routing.yml"
+        prefix:   /
+    ```
+
+    MyBundle/Ressources/config/routing.yml:
+    ```yaml
+    example:
+        pattern:  /example
+        defaults: { _controller: MyBundle:Example:cache}
+    ```
+
+    Voici pour le Controller:
+    ```php
+    <?php
+
+    namespace MyBundle\Controller;
+
+    use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+
+    class ExampleController extends Controller {
+        public function cacheAction() {
+            return $this->renderView('MyBundle:Cache:cache.html.twig', array('hello' => 'Hello World!!!'));
+        }
+    }
+    ```
+
+    Enfin, votre template cache.html.twig situé dans MyBundle/Resources/views/Cache/cache.html.twig:
+    {% raw %}
+    ```
+    {% extends "@MyBundle/layout.html.twig" %}
+
+    {% block body %}
+
+        <h1>{{ hello }}</h1>
+
+    {% endblock %}
+    ```
+    {% endraw %}
+
+    Et voilà le résultat:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/hello1.png)](/assets/2013-12-08-symfony-2-cache-http-esi/hello1.png){: .center-image .no-link-style}
+
+    Maintenant pour s’assurer que le cache est bien inactif, ouvrez firebug.
+
+    Allez dans l’onglet Réseau (ou Network pour ceux qu’ils l’ont en anglais),
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/firebug1.png)](/assets/2013-12-08-symfony-2-cache-http-esi/firebug1.png){: .center-image .no-link-style}
+
+    Et dépliez le get correspondant à votre route:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/response1.png)](/assets/2013-12-08-symfony-2-cache-http-esi/response1.png){: .center-image .no-link-style}
+
+    On voit donc bien ici la valeur du Cache-Control qui est à no-cache.
+
+    Maintenant pour activer le cache, on va légèrement modifier notre Controller.
+    Commencez par rajouter votre dépendance à l’objet Response dans votre controller:
+    ```php
+    use Symfony\Component\HttpFoundation\Response;
+    ```
+
+    Modifiez maintenant votre action:
+    ```php
+    public function cacheAction() {
+        $response = new Response();
+        $response->setMaxAge(300);
+
+        // Check that the Response is not modified for the given Request
+        if (!$response->isNotModified($this->getRequest())) {
+            $date = new \DateTime();
+            $response->setLastModified($date);
+            $response->setContent($this->renderView('MyBundle:Cache:cache.html.twig', array('hello' => 'Hello World!!!')));
+            }
+
+            return $response;
+        }
+    }
+    ```
+
+    Voici une utilisation très simpliste du système de cache.
+
+    L’objet Response va nous permettre de manipuler les différents éléments d’information de l’en-tête Cache-Control. Ici, je me suis contenté de définir le temps de validité de la réponse mise en cache (ici 300 secondes). Au-delà de cette durée, la réponse va être régénérée par le serveur et sera de nouveau valide durant 300 secondes. Si la réponse est encore valide, on la retourne directement sinon on régénère la réponse et on modifie sa date de modification.
+
+    Maintenant, si on jette à nouveau un œil à notre firebug:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/response2.png)](/assets/2013-12-08-symfony-2-cache-http-esi/response2.png){: .center-image .no-link-style}
+
+    On constate que le système de cache est bien activé. Pour aller plus loin avec les différentes options possibles de l’en-tête, je vous invite fortement, si ce n’est pas déjà fait, à lire la doc sur le site officiel de <a href="http://symfony.com/doc/master/http_cache.html" rel="nofollow noreferrer" style="color:#0000ff;">Symfony</a>.
+
+    Ok, tout ça c’est bien, mais cela met en cache une page entière. Mais votre besoin sera peut-être de ne mettre en page qu’une partie de la page.
+    Heureusement pour nous, Symfony a pensé à tout et nous fournit une solution, les «Edge Side Includes» (ESI).
+
+    ## Exemple 2 : ESI
+
+    Pour activer le mode ESI dans Symfony, ouvrez votre app/config/config.yml et ajoutez ces deux lignes dans la partie framework :
+    ```yaml
+    framework:
+        esi: { enabled: true }
+    ```
+
+    Maintenant créez un deuxième template. Moi je l’appellerai esi.html.twig et il contiendra simplement:
+    ```html
+    <h2>Partie en Cache</h2>
+    ```
+
+    Modifiez le premier template:
+    {% raw %}
+    ```
+    {% extends "@ MyBundle/layout.html.twig" %}
+
+    {% block body %}
+
+        <h1>{{ hello }}</h1>
+
+        {{ render_esi(controller(' MyBundle:Example:getEsiCache')) }}
+
+    {% endblock %}
+    ```
+    {% endraw %}
+
+    Et enfin votre controlleur:
+    ```php
+    <?php
+
+    namespace My\Bundle\TrainingBundle\Controller;
+
+    use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+    use Symfony\Component\HttpFoundation\Response;
+    use Symfony\Component\HttpFoundation\Request;
+
+    class ExampleController extends Controller {
+
+        public function cacheAction() {
+            return $this->render('MyBundle:Cache:cache.html.twig',
+                array('hello' => 'Hello World!!!'));
+        }
+
+        public function getEsiCacheAction(Request $request) {
+            $response = new Response();
+            $response->setSharedMaxAge(10);
+            $response->setPublic();
+            $response->setMaxAge(10);
+
+            // Check that the Response is not modified for the given Request
+            if (!$response->isNotModified($request)) {
+                $date = new \DateTime();
+                $response->setLastModified($date);
+                $response->setContent($this->renderView('MyBundle:Cache:esi.html.twig'));
+            }
+            return $response;
+        }
+    }
+    ```
+
+    J’ai ici simplifié l’action cacheAction() pour n’activer le cache que pour le fragment ESI.
+
+    Actualiser votre page et vous devez obtenir ceci:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/hello2.png)](/assets/2013-12-08-symfony-2-cache-http-esi/hello2.png){: .center-image .no-link-style}
+
+    Maintenant, si on repart voir ce que nous dit notre bon vieil ami firebug, on voit:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/response3.png)](/assets/2013-12-08-symfony-2-cache-http-esi/response3.png){: .center-image .no-link-style}
+
+    Une ligne X-Symfony-Cache est apparu. Si on se concentre sur la fin de la ligne, on lit: «…EsiCache: stale, invalid, store». En gros, le cache de ce fragment n’était pas valide (normal vu qu’on vient de le créer :) ). Mais si vous faite un petit F5, vous aurez le message suivant:
+
+    <br/>
+    [![mémoire cache](/assets/2013-12-08-symfony-2-cache-http-esi/response4.png)](/assets/2013-12-08-symfony-2-cache-http-esi/response4.png){: .center-image .no-link-style}
+
+    Aahhhh, ça a l’air d’être «fresh» :)
+
+    Je vous passe les explications mais vous aurez compris que le fragment en cache était valide et qu’il a pu être retourné directement.
+
+    Vous avez maintenant les bases pour voler de vos propres ailes et optimiser votre application.
+- title: "Facebook, l'entreprise tech la moins fiable en matière de protection de données personnelles"
+  subtitle: "Seulement 22 % des Américains lui font confiance"
+  body: >
+    Vous avez un nouveau projet personnel ou professionnel, vous ne voulez pas vous prendre la tête avec l’infrastructure, et vous souhaitez payer seulement pour les ressources utilisées ? Serverless est fait pour vous !
+
+    Avant de vous lancer directement dans un cas concret sur l’utilisation du framework serverless, nous allons commencer par revenir sur les notions et la définition de serverless.
+
+    ## Que veut réellement dire serverless ?
+
+    Dans le monde du cloud et du devops, il n’y a pas une seule et unique définition. Je vais donc vous donner la mienne.
+
+    Nous pouvons considérer que si nous n’avons pas de gestion de serveur, alors nous sommes dans le monde du Serverless. Cela voudrait dire que des services comme AWS Elastic Beanstalk, Google App Engine, Heroku, Clever Cloud qui sont des services PaaS pourraient être compris dans cette définition.
+
+    Cependant, nous allons souvent plus loin dans la définition du serverless. Il y a bien le côté de non-gestion des serveurs, mais aussi de pay-as-you-go. Il n’y a plus de frais fixes pour maintenir votre infrastructure disponible, mais seulement des coûts liés à l’utilisation de celle-ci. Des services comme AWS Lambda ou Google Cloud Functions rentrent parfaitement dans cette catégorie.
+
+    ## Le framework serverless, il sert à quoi ?
+
+    [Serverless](https://serverless.com/) est un des outils les plus connus à ce jour, il est compatible avec les solutions Cloud suivantes : AWS, IBM OpenWhisk, Microsoft Azure, GCP, Kubeless, Spotinst, Webtask. Serverless est agnostique du langage dans lequel vous souhaitez développer. Cependant, si votre provider ne supporte pas votre langage, cela pourrait ne pas fonctionner. L’ensemble des providers supporte deux langages : NodeJS et Python.
+    Mais il est aussi capable d’aller beaucoup plus loin grâce à un système de plugins. Ainsi, vous pouvez démarrer vos fonctions en local sur votre machine en simulant le fonctionnement d’API Gateway et Lambda, ou encore avoir une base DynamoDB locale pour vos développements.
+
+    ## Comment fonctionne le framework serverless
+
+    Quand on cherche à déployer avec serverless, celui-ci va lire notre fichier serverless.yml et le convertir en [CloudFormation](https://aws.amazon.com/fr/cloudformation/). Le code vas être zippé puis uploade sur S3. CloudFormation lors de son lancement va récupérer les fichiers sur S3 pour alimenter les fonctions Lambda, et créer / modifier / supprimer les resources nécessaires (rôles, lambda, dynamodb...).
+
+    ### Prenons un cas concret
+
+    Nous allons déployer sur AWS une API GraphQL qui utilise une base de donnée DynamoDB. Nous allons découper le fichier serverless.yml et comprendre le fonctionnement de chacun des blocks.
+    ```yaml
+    service: factory-api
+
+    frameworkVersion: ">=1.21.0 <2.0.0"
+
+    provider:
+     name: aws
+     region: eu-west-3
+     runtime: nodejs8.10
+     environment:
+       DYNAMODB_TABLE_TEMPLATE: ${self:service}-${opt:stage, self:provider.stage}-template
+    iamRoleStatements:
+       - Effect: Allow
+         Action:
+           - dynamodb:Query
+           - dynamodb:Scan
+           - dynamodb:GetItem
+           - dynamodb:PutItem
+           - dynamodb:UpdateItem
+           - dynamodb:DeleteItem
+         Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE_TEMPLATE}"
+    ```
+    Votre fichier de description doit commencer par un “service” qui porte le nom de votre projet.
+    Puis vous allez configurer votre provider. Dans notre cas, nous souhaitons utiliser AWS sur la région de Paris (eu-west-3). Notre fonction lambda tournera avec un NodeJS 8.10. Nous voulons aussi ajouter une variable d’environnement à nos lambdas (DYNAMODB_TABLE_TEMPLATE).
+    Nous avons aussi besoin que notre Lambda communique avec DynamoDB de façon automatique et sans devoir stocker des credentials AWS. Pour cela nous allons utiliser un Rôle AWS.
+    ```yaml
+    package:
+     exclude:
+       - docs/**
+       - helpers/**
+       - node_modules/**
+       - test/**
+    ```
+    Quand on demande un déploiement à Serverless, celui-ci va créer un répertoire temporaire, et copier le code ainsi que les dépendances de celui-ci.
+    Dans son comportement par défaut, il copie l’ensemble du répertoire dans le répertoire temporaire, mais nous pourrions vouloir exclure certains dossiers (comme dans cet exemple).
+    ```yaml
+    plugins:
+     - serverless-offline
+     - serverless-webpack
+     - serverless-domain-manager
+     - serverless-dynamodb-local
+     - serverless-prune-plugin
+    ```
+    Nous pouvons ajouter des plugins pour améliorer et / ou changer le comportement de serverless :
+    - serverless-offline : nous permet d’avoir en local un environnement simulant le fonctionnement de Lambda et API Gateway
+    - serverless-webpack : nous permet de compiler le code NodeJS
+    - serverless-domain-manager : nous permet de gérer nos domaines et certificats pour les rattacher directement à notre API Gateway
+    - serverless-dynamodb-local : nous permet d’avoir une base de donnée DynamoDB en local pour nos développements, cela nous permet aussi de faire des développements en offline
+    - serverless-prune-plugin : nous permet de nettoyer au fur et à mesure les ressources non utilisées, ainsi nous ne gardons pas tout notre historique sur les lambdas, mais seulement les 3 dernières.
+
+    ```yaml
+    custom:
+     prune:
+       automatic: true
+       number: 3
+     domains:
+       preprod: "preprod-api.aws.eleven-labs.com"
+       prod: "api.aws.eleven-labs.com"
+     certificate:
+       preprod: "*.aws.eleven-labs.com"
+       prod: "*.aws.eleven-labs.com"
+     serverless-offline:
+       port: 4000
+     webpackIncludeModules: true
+     customDomain:
+       domainName: "${self:custom.domains.${opt:stage}}"
+       stage: "${opt:stage}"
+       certificateName: "${self:custom.certificate.${opt:stage}}"
+       createRoute53Record: true
+       endpointType: 'regional'
+     dynamodb:
+       start:
+         host: dynamodb
+         migrate: true
+         noStart: true
+       migration:
+         dir: offline/migrations
+    ```
+    Quand on ajoute des plugins, il est souvent nécessaire d’ajouter de la config supplémentaire. Il faut alors l’ajouter dans le block custom, et suivre la documentation de chaque plugin :)
+    ```yaml
+    functions:
+     graphql:
+       runtime: nodejs8.10
+       handler: index.graphqlHandler
+       events:
+         - http:
+             path: graphql
+             method: get
+             cors: true
+         - http:
+             path: graphql
+             method: post
+             cors: true
+    ```
+    Le block functions nous permet de définir les lambdas que nous souhaitons créer avec leurs spécificités.
+    ```yaml
+    resources:
+     Resources:
+       dynamodbTemplate:
+         Type: 'AWS::DynamoDB::Table'
+         DeletionPolicy: Retain
+         Properties:
+           AttributeDefinitions:
+             -
+               AttributeName: id
+               AttributeType: S
+           KeySchema:
+             -
+               AttributeName: id
+               KeyType: HASH
+           ProvisionedThroughput:
+             ReadCapacityUnits: 1
+             WriteCapacityUnits: 1
+           TableName: ${self:provider.environment.DYNAMODB_TABLE_TEMPLATE}
+
+    ```
+    Nous pouvons demander à Serverless de créer des ressources supplémentaires sur AWS, dans notre cas, nous allons créer une table DynamoDB.
+
+    Comme nous avons pu le voir, avec un seul fichier, nous sommes capable de déployer l’infrastructure nécessaire au fonctionnement de notre projet, mais aussi simplifier la vie de nos développeurs.
+
+    Maintenant, vous êtes capables de déployer votre projet via le framework serverless, cependant, vous pourriez vouloir aller plus loin. Pourquoi ne pas ajouter une queue SQS ? Voire même des lambdas qui se lancent automatiquement lors d’un nouveau message dans SQS ? (Je vous recommande de regarder du côté des triggers sur SQS et Lambda).
+- title: "France : le secteur des SSII est visé par une enquête pour entente"
+  subtitle: "Diligentée par l'Autorité de la concurrence"
+  body: >
+    # Cucumber for Angular
+
+    ## Introduction
+
+    __AngularCLI__ est une interface en ligne de commandes pour __Angular__ (trouvé sur https://cli.angular.io/).
+
+    Cet outil comporte plusieurs fonctionnalités utiles qui nous font gagner beaucoup de temps.
+    Il nous permet, par exemple, de générer un nouveau projet (Angular bien sûr) en une seule ligne de commande.
+
+    Dans cet article, nous n'allons pas aborder toutes les fonctionalités de __AngularCLI__, nous allons plutôt nous concentrer sur la partie _test_, plus précisément les tests `e2e`.
+
+    En effet, __AngularCLI__ possède une commande `ng e2e`, qui nous permet de lancer les tests `e2e`. Cela est possible car au moment de la génération d'un nouveau projet __Angular__, __AngularCLI__ va installer des paquets tiers qui nous permettent d'implémenter et exécuter les tests `e2e`. Il va installer (et configurer) pour nous __Protractor__ (qui à son tour va installer _webdriver_ et _selenium_) et __Jasmine__ (utilisé aussi pour les tests unitaires). Ce n'est peut-être pas la bonne sélection d'outils si nous voulons faire du __BDD__ ou si nous avons juste besoin d'exécuter nos tests sur _Chrome Headless_ et que les autres navigateurs ne nous intéressent pas.
+
+    À travers cet article, nous allons voir comment supprimer __Protractor__ et le remplacer par __Cucumber__ (pour le __BDD__) et __Puppeteer__ (pour communiquer avec _Chrome Headless_).
+
+    ## Supprimer Protractor
+
+    Avant de mettre en place __Cucumber/Puppeteer__, nous allons d'abord supprimer __Protractor__ et les répertoires/fichiers associés qui ont été générés par AngularCLI.
+
+    ### Désinstaller Protractor
+
+    La désinstallation de __Protractor__ se fait comme suit :
+
+    ```bash
+    $ npm uninstall protractor --save-dev
+    ```
+
+    ### Supprimer la partie e2e des fichiers de configuration
+
+    AngularCLI nous permet de lancer les tests `e2e` via la commande `ng e2e`, nous allons donc retirer l'appel à cette commande des scripts `npm` qui se trouvent dans le fichier `package.json` :
+
+    ```json
+     {
+       "scripts": {
+    -    "e2e": "ng e2e",
+    +    "e2e": "echo \"no e2e test yet!\"",
+         ...
+       }
+     }
+    ```
+
+    Vu que nous ne passons plus par AngularCLI pour nos tests `e2e`, nous allons supprimer du fichier `angular.json` le projet `<project-name>-e2e` (où `<project-name>` est le nom de votre projet) qui se trouve dans la partie `projects` :
+
+    ```json
+     {
+       "projects": {
+         "my-project": {...},
+    -    "my-project-e2e": {...}
+       }
+     }
+    ```
+
+    Le dernier fichier de configuration à modifier est `src/tsconfig.e2e.json`. Nous allons retirer `jasmine` et `jasminewd2` de la propriété `types` des options du compilateur TypeScript (nous verrons un peu plus bas par quoi nous allons le remplacer) :
+
+    ```json
+     {
+       "extends": "../tsconfig.json",
+       "compilerOptions": {
+         "outDir": "../out-tsc/app",
+         "module": "",
+         "target": "es5",
+         "types": [
+    -      "jasmine",
+    -      "jasminewd2",
+           "node"
+         ]
+       }
+     }
+    ```
+
+    ### Supprimer les fichiers créés par AngularCLI
+
+    Ensuite, nous allons supprimer le contenu du répertoire `e2e/src` et le fichier `e2e/protractor.conf.js` :
+
+    ```bash
+    $ rm e2e/src/* e2e/protractor.conf.js
+    ```
+
+    ## Mettre en place Cucumber/Puppeteer
+
+    Maintenant que nous avons désinstallé __Protractor__ et supprimé les fichiers de configuration correspondants, passons à l'étape suivante qui est la mise en place de __Cucumber/Puppeteer__ et __Chai__ pour pouvoir faire nos assertions.
+
+    ### Installation
+
+    Nous allons installer les paquets suivants :
+
+    * __Cucumber__ : c'est l'outil qui va nous permettre d'exécuter nos tests.
+    * __Puppeteer__ : pour communiquer avec l'API de Chrome/Chromium
+    * __Chai__ : une librairie d'assertion.
+
+    ```bash
+    $ npm install cucumber puppeteer chai --save-dev
+    ```
+
+    Afin que __TypeScript__ puisse reconnaître les paquets que nous venons d'installer, nous allons aussi installer les __Type Definition__ de ces derniers :
+
+    ```bash
+    $ npm install @types/{cucumber,puppeteer,chai}
+    ```
+
+    ### Structure des fichiers
+
+    La structure par défaut proposée par __Cucumber__ est la suivante :
+
+    ```
+    features/
+      step_definitions/
+        feautre1.steps.ts
+        feautre2.steps.ts
+        ...
+      feature1.feature
+      feature2.feature
+      ...
+    ```
+
+    Personnellement je préfère séparer les _steps_ des _features_, nous allons donc les mettre au même niveau (si vous voulez opter pour la structure proposée par __Cucumber__, il faudra dans ce cas adapter les chemins dans les étapes qui viennent). Nous allons aussi utiliser le modèle __Page Object Pattern__ afin de séparer l'appel à l'API de _Chrome/Chromium_ de nos tests :
+
+    ```
+    e2e/
+      src/
+        features/
+          feature1.feature
+          feature2.feature
+          ...
+        steps/
+          feature1.steps.ts
+          feature2.steps.ts
+          ...
+        po/
+          app.po.ts
+          ...
+      tsconfig.e2e.json
+    ```
+
+    * _features_ : contient nos _user stories_ rédigées en _Gherkin_.
+    * _steps_ : contient l'implémentation des tests.
+    * _po_ : contient nos _class_ __PageObject__
+
+    ### Configuration
+
+    Nous allons maintenant configurer notre application pour qu'elle puisse lancer les tests.
+
+    Commençons par le fichier `src/tsconfig.e2e.json` en ajoutant `cucumber` au tableau `types` que nous avons édité un peu plus haut :
+
+    ```json
+     {
+       "extends": "../tsconfig.json",
+       "compilerOptions": {
+         "outDir": "../out-tsc/app",
+         "module": "commonjs",
+         "target": "es5",
+         "types": [
+    +      "cucumber",
+           "node"
+         ]
+       }
+     }
+    ```
+
+    La dernière configuration à faire, est le _script npm_ `e2e`. C'est à cet endroit que nous ferons appel à __Cucumber__ pour exécuter nos tests.
+
+    La commande `cucumber-js` permet d'écrire les _steps_ en _TypeScript_ grâce à `ts-node` (d'autres transpilateurs sont supportés aussi, comme _CoffeeScript_), nous allons donc utiliser l'option `--require-module` afin d'utiliser `ts-node`.
+
+    Par défaut `ts-node` va charger le fichier `tsconfig.json` qui se trouve à la racine du projet. Mais comme `cucumber-js` ne permet pas le passage de paramètres au module `ts-node`, nous allons utiliser la variable d'environnement `TS_NODE_PROJECT` et lui assigner le chemin `e2e/tsoncif.e2e.json` que nous avons vu un peu plus haut.
+
+    ```json
+     {
+       "scripts": {
+    -    "e2e": "echo \"no e2e test yet\"",
+    +    "e2e": "TS_NODE_PROJECT=e2e/tsconfig.e2e.json cucumber-js --require-module ts-node/register -r e2e/steps/**/*.steps.ts e2e/features/**/*.feature",
+         ...
+       }
+     }
+
+    ```
+
+    ## Exemple de scénario
+
+    Nous allons à présent rédiger notre première _feature_ que nous allons mettre dans le fichier `e2e/src/features/welcome.feature` :
+
+    ```gherkin
+    Feature: Say hello to visitor
+      Scenario: Display a welcome message
+        Given a visitor visits our website
+        When the home page is loaded
+        Then he should see a message saying "Welcome Visitor !"
+    ```
+
+    Passons maintenent au fichier `e2e/src/steps/welcome.steps.ts` :
+    ```typescript
+    import { AfterAll, BeforeAll, Given, Then, When }  from 'cucumber';
+    import { expect } from 'chai';
+
+    import { AppPage } from '../po/app.po';
+
+    let appPage: AppPage;
+
+    BeforeAll(async () => {
+      appPage = new AppPage();
+      await appPage.init();
+    });
+
+    Given('a visitor visits our website', async () => {
+      await appPage.gotoPage('/');
+    });
+
+    When('the home page is loaded', async () => {
+      await appPage.waitFor('h1');
+    });
+
+    Then('he should see a message saying {string}', async message => {
+      expect(await appPage.getContent('h1')).to.equal(message);
+    });
+
+    AfterAll(() => {
+      appPage.close();
+    });
+
+    ```
+
+    Et dans le fichier `e2e/src/po/app.po` :
+
+    ```typescript
+    import * as puppeteer from 'puppeteer';
+
+    export class AppPage {
+      browser: puppeteer.Browser;
+      page: puppeteer.Page;
+      baseUrl = 'http://localhost:4200';
+
+      async init() {
+        this.browser = await puppeteer.launch();
+        this.page = await this.browser.newPage();
+      }
+
+      async gotoPage(url) {
+        await this.page.goto(this.baseUrl + url);
+      }
+
+      async getContent(selector) {
+        return await this.page
+          .evaluate(select => document.querySelector(select).textContent, selector);
+      }
+
+      async waitFor(selector) {
+        return this.page.waitFor(selector);
+      }
+
+      close() {
+        this.browser.close();
+      }
+    }
+    ```
+
+    ## Exécution des tests
+
+    Avant de lancer __Cucumber__, nous devons exécuter `npm start` pour que __Puppeteer__ puisse naviguer vers `http://localhost:4200`.
+
+    Une fois que notre serveur _http_ en local est en marche, nous pouvons exécuter nos tests via la commande :
+
+    ```bash
+    $ npm run e2e
+    ```
+
+    > Pour rappel, lors de la configuration de __Cucumber__ nous avons remplacé le script _npm_ `e2e` par la commande qui permet de lancer __Cucumber__.
+
+    ## Conclusion
+
+    __AngularCLI__ nous fournit plein d'outils par défaut, afin d'accélerer et faciliter le développement de nos applications. Mais cela ne veut pas dire que nous ne pouvons pas remplacer ces outils par d'autres.
+
+    Dans notre cas, nous avons décidé de ne pas utiliser __Protractor__ et d'utiliser à la place __Cucumber/Puppeteer__.
+
+    Nous avons donc commencé par voir comment supprimer __Protractor__. Ensuite, nous avons vu comment mettre en place __Cucumber__. Une fois tout en place, nous avons rédigé un exemple de scénario et implémenté les _steps definitions_ de ce scénario. En dernier, nous avons vu comment exécuter nos tests.
+- title: "Chrome 71 va avertir les mobinautes qui visitent des pages Web"
+  subtitle: "Comprenant des formulaires d'abonnement mobile louches"
+  body: >
+    Aujourd’hui si vous voulez mettre en place une CI/CD sur GitHub il vous faut “linker” vos dépôts avec Travis-ci, Circle-ci, Codeship... Mais savez-vous que GitLab intègre une solution de CI/CD ? C'est l'objet de l'article d'aujourd'hui.
+
+    Dans cet article je vais juste vous présenter les possibilités que vous offre GitLab CI/CD. Mais pour aller plus loin je vous propose aussi deux tutos sur le [codelabs d'Eleven Labs](https://codelabs.eleven-labs.com) :
+    - Mettre en place une CI sur un projet symfony - En cours de rédaction
+    - [Mettre en place une Ci sur un projet js](https://codelabs.eleven-labs.com/course/fr/gitlab-ci-js/)
+
+    # CI/CD c'est quoi ?
+
+    Je ne vais pas vous refaire une définition mais voici ce que nous dit Wikipédia pour CI et CD :
+
+    ## CI : Continuous Integration
+    > “L'intégration continue est un ensemble de pratiques utilisées en génie logiciel consistant à vérifier à chaque modification de code source que le résultat des modifications ne produit pas de régression dans l'application développée. [...] Le principal but de cette pratique est de détecter les problèmes d'intégration au plus tôt lors du développement. De plus, elle permet d'automatiser l'exécution des suites de tests et de voir l'évolution du développement du logiciel.”
+
+    ## CD : Continuous Delivery
+    > "La livraison continue est une approche d’ingénierie logicielle dans laquelle les équipes produisent des logiciels dans des cycles courts, ce qui permet de le mettre à disposition à n’importe quel moment. Le but est de construire, tester et diffuser un logiciel plus rapidement.
+    L’approche aide à réduire le coût, le temps et les risques associés à la livraison de changement en adoptant une approche plus incrémentale des modifications en production. Un processus simple et répétable de déploiement est un élément clé."
+
+    # GitLab en quelques mots
+    Alors Gitlab c’est :
+    - **Gitlab inc** : la compagnie qui gère les développements des produits GitLab
+    - **Gitlab** : c’est une version que vous pouvez installer sur votre machine, serveur ou dans le cloud facilement avec le [Market place d’AWS](https://aws.amazon.com/marketplace/pp/B071RFCJZK)
+    - **GitLab.com** : c’est une version web comme GitHub ou BitBucket.
+
+    GitLab et GitLab.com sont des gestionnaires de repositories git basés sur le web avec des fonctionnalités comme :
+     - un wiki,
+     - un suivi d’issue,
+     - un registry docker,
+     - un suivi de code,
+     - une review de code
+     - une CI/CD,
+     - ...
+
+    GitLab est beaucoup plus fourni en fonctionnalités que GitHub dans sa version gratuite. Il est aussi possible d'avoir des dépôts privés sans avoir d'abonnement.
+
+    # Avant de commencer
+    GitLab CI/CD va vous permettre d'automatiser les `builds`, les `tests`, les `déploiements`, etc de vos applications. L’ensemble de vos tâches peut-être divisé en étapes et l’ensemble des vos tâches et étapes constituent une pipeline.
+
+    Chaque tâche est exécutée grâce à des `runners`, qui fonctionnent grâce à un projet open source nommé [GitLab Runner](https://gitlab.com/gitlab-org/gitlab-runner/) écrit en [GO](https://golang.org).
+
+    Vous pouvez avoir vos propres `runners` directement sur votre machine ou serveur. Pour plus d'information je vous laisse lire la documentation officielle :
+     - [Page du projet GitLab Runner](https://docs.gitlab.com/runner/)
+     - [Configuration de GitLab Runner](https://docs.gitlab.com/runner/configuration/)
+     - [Configuration avancée de GitLab Runner](https://docs.gitlab.com/runner/configuration/advanced-configuration.html)
+
+    GitLab propose aussi des runners publics, qui vous épargnent une installation, mais attention, il y a des quotas suivant le type de compte dont vous diposez. En compte gratuit, vous avez le droit à 2000 minutes de temps de pipeline par mois. Les runners publics de gitlab.com sont exécutés sur AWS.
+
+    # Présentation de GitLab CI/CD
+    Comme je vous l’ai dit je ne vais pas vous montrer comment mettre en place une CI/CD de A à Z dans cet article mais je vais vous présenter les possibilités de la solution de GitLab CI/CD.
+
+    ## Le manifeste
+    Pour que la CI/CD sur GitLab fonctionne il vous faut un manifeste `.gitlab-ci.yml` à la racine de votre projet. Dans ce manifeste vous allez pouvoir définir des `stages`, des `jobs`, des `variables`, des `anchors`, etc.
+
+    Vous pouvez lui donner un autre nom mais il faudra changer le nom du manifeste dans les paramètres de l’interface web :  `Settings > CI/CD > General pipelines > Custom CI config path`
+
+    ## Les Jobs
+    Dans le manifeste de GitLab CI/CD vous pouvez définir un nombre illimité de `jobs`, avec des contraintes indiquant quand ils doivent être exécutés ou non.
+
+    Voici comment déclarer un `job` le plus simplement possible :
+    ```yaml
+    job:
+      script: echo 'my first job'
+    ```
+    Et si vous voulez déclarer plusieurs `jobs` :
+    ```yaml
+    job:1:
+      script: echo 'my first job'
+
+    job:2:
+      script: echo 'my second job'
+    ```
+    les noms des `jobs` doivent être uniques et ne doivent pas faire parti des mots réservés :
+    - `image`
+    - `services`
+    - `stages`
+    - `types`
+    - `before_script`
+    - `after_script`
+    - `variables`
+    - `cache`
+
+    Dans la définition d'un `job` seule la déclaration `script` est obligatoire.
+
+    ## Script
+    La déclaration `script` est donc la seule obligatoire dans un `job`. Cette déclaration est le coeur du `job` car c'est ici que vous indiquerez les actions à effectuer.
+
+    Il peut appeler un ou plusieurs script(s) de votre projet, voire exécuter une ou plusieurs ligne(s) de commande.
+
+    ```yaml
+    job:script:
+      script: ./bin/script/my-script.sh ## Appel d'un script de votre projet
+
+    job:scripts:
+      script: ## Appel de deux scripts de votre projet
+        - ./bin/script/my-script-1.sh
+        - ./bin/script/my-script-2.sh
+
+    job:command:
+      script: printenv # Exécution d'une commande
+
+    job:commands:
+      script: # Exécution de deux commandes
+        - printenv
+        - echo $USER
+    ```
+
+    ## before_script et after_script
+    Ces déclarations permettront d'exécuter des actions avant et après votre script principal. Ceci peut être intéressant pour bien diviser les actions à faire lors des `jobs`, ou bien appeler ou exécuter une action avant et après chaque `job`
+
+    ```yaml
+    before_script: # Exécution d'une commande avant chaque `job`
+      - echo 'start jobs'
+
+    after_script: # Exécution d'une commande après chaque `job`
+      - echo 'end jobs'
+
+    job:no_overwrite: # Ici le job exécutera les action du `before_script` et `after_script` par défaut
+      script:
+        - echo 'script'
+
+    job:overwrite:before_script:
+      before_script:
+        - echo 'overwrite' # N'exécutera pas l’action définie dans le `before_script` par défaut
+      script:
+        - echo 'script'
+
+    job:overwrite:after_script:
+      script:
+        - echo 'script'
+      after_script:
+        - echo 'overwrite' # N'exécutera pas l’action définie dans le `after_script` par défaut
+
+    job:overwrite:all:
+      before_script:
+        - echo 'overwrite' # N'exécutera pas l’action définie dans le`before_script` par défaut
+      script:
+        - echo 'script'
+      after_script:
+        - echo 'overwrite' # N'exécutera pas l’action définie dans le `after_script` par défaut
+    ```
+
+    ## Image
+    Cette déclaration est simplement l'image docker qui sera utilisée lors d'un job ou lors de tous les jobs
+
+    ```yaml
+    image: alpine # Image utilisée par tous les `jobs`, ce sera l'image par défaut
+
+    job:node: # Job utilisant l'image node
+      image: node
+      script: yarn install
+
+    job:alpine: # Job utilisant l'image par défaut
+      script: echo $USER
+    ```
+
+    ## Stages
+    Cette déclaration permet de grouper des `jobs` en étapes. Par exemple on peut faire une étape de `build`, de `codestyling`, de `test`, de `code coverage`, de `deployment`, ….
+
+    ```yaml
+    stages: # Ici on déclare toutes nos étapes
+      - build
+      - test
+      - deploy
+
+    job:build:
+      stage: build # On déclare que ce `job` fait partie de l'étape build
+      script: make build
+
+    job:test:unit:
+      stage: test # On déclare que ce `job` fait partie de l'étape test
+      script: make test-unit
+
+    job:test:functional:
+      stage: test # On déclare que ce `job` fait partie de l'étape test
+      script: make test-functional
+
+    job:deploy:
+      stage: deploy # On déclare que ce `job` fait partie de l'étape deploy
+      script: make deploy
+    ```
+    ![CI Stages]({{site.baseurl}}/assets/2018-09-19-introduction-gitlab-ci/ci-stages.png)
+
+    ## Only et except
+    Ces deux directives permettent de mettre en place des contraintes sur l'exécution d’une tâche. Vous pouvez dire qu’une tâche s'exécutera uniquement sur l’événement d’un push sur master ou s'exécutera sur chaque push d’une branche sauf master.
+
+    Voici les possibilités :
+     - **branches** déclenche le `job` quand un un push est effectué sur la branche spécifiée.
+     - **tags** déclenche le `job` quand un tag est créé.
+     - **api** déclenche le `job` quand une deuxième pipeline le demande grâce à API pipeline.
+     - **external** déclenche le `job` grâce à un service de CI/CD autre que GitLab.
+     - **pipelines** déclenche le `job` grâce à une autre pipeline, utile pour les multiprojets grâce à l’API et le token `CI_JOB_TOKEN`.
+     - **pushes** déclenche le `job`quand un utilisateur `push` par un utilisateur.
+     - **schedules** déclenche le `job` par rapport à une planification à paramétrer dans l’interface web.
+     - **triggers** déclenche le `job` par rapport à un jeton de déclenchement.
+     - **web** déclenche le `job` par rapport au bouton `Run pipeline` dans l'interface utilisateur.
+
+     Je vais vous montrer trois exemples d'utilisation :
+
+    ### only et except simple
+    Dans son utilisation la plus simple, le only et le except se déclarent comme ceci :
+    ```yaml
+    job:only:master:
+      script: make deploy
+      only:
+        - master # Le job sera effectué uniquement lors d’un événement sur la branche master
+
+    job:except:master:
+      script: make test
+      except:master:
+        - master # Le job sera effectué sur toutes les branches lors d’un événement sauf sur la branche master
+    ```
+    ### only et except complex
+
+    Dans son utilisation la plus complexe, le only et le except s'utilisent comme ceci :
+    ```yaml
+    job:only:master:
+      script: make deploy
+      only:
+        refs:
+          - master # Ne se fera uniquement sur master
+        kubernetes: active # Kubernetes sera disponible
+        variables:
+          - $RELEASE == "staging" # On teste si $RELEASE vaut "staging"
+          - $STAGING # On teste si $STAGING est défini
+    ```
+    ### only avec schedules
+    Pour l'utilisation de `schedules` il faut dans un premier temps définir des règles dans l'interface web.
+    On peut les configurer dans l’interface web de Gitlab :  `CI/CD -> Schedules` et remplir le formulaire.
+
+    ![CI Schedules]({{site.baseurl}}/assets/2018-09-19-introduction-gitlab-ci/ci-schedules.png)
+
+    Si vous souhaitez, vous pouvez définir un intervalle de temps personnalisé. C'est ce que j'ai fait dans mon exemple. La définition se fait comme un [cron](https://en.wikipedia.org/wiki/Cron)
+
+    ## when
+    Comme pour les directives `only` et `except`, la directive `when` est une contrainte sur l'exécution de la tâche. Il y a quatre modes possibles :
+     - `on_success` : le job sera exécuté uniquement si tous les `jobs` du stage précédent sont passés
+     - `on_failure` : le job sera exécuté uniquement si un job est en échec
+     - `always` : le job s'exécutera quoi qu'il se passe (même en cas d’échec)
+     - `manual` : le job s'exécutera uniquement par une action manuelle
+
+    ```yaml
+    stages:
+      - build
+      - test
+      - report
+      - clean
+
+    job:build:
+      stage: build
+      script:
+        - make build
+
+    job:test:
+      stage: test
+      script:
+        - make test
+      when: on_success # s'exécutera uniquement si le job `job:build` passe
+
+    job:report:
+      stage: report
+      script:
+        - make report
+      when: on_failure # s'exécutera si le job `job:build` ou `job:test` ne passe pas
+
+    job:clean:
+      stage: clean
+      script:
+        - make clean # s'exécutera quoi qu'il se passe
+      when: always
+    ```
+
+    ## allow_failure
+    Cette directive permet d'accepter qu'un job échoue sans faire échouer la pipeline.
+
+    ```yaml
+    stages:
+      - build
+      - test
+      - report
+      - clean
+
+    ...
+
+    stage: clean
+      script:
+        - make clean
+        when: always
+        allow_failure: true # Ne fera pas échouer la pipeline
+    ...
+    ```
+
+    ## tags
+    Comme je vous l'ai dit en début d’article, avec GitLab Runner vous pouvez héberger vos propres runners sur un serveur ce qui peut être utile dans le cas de configuration spécifique.
+
+    Chaque runner que vous définissez sur votre serveur à un nom, si vous mettez le nom du runner en `tags`, alors ce runner sera exécuté.
+
+    ```yaml
+    job:tag:
+      script: yarn install
+      tags:
+        - shell # Le runner ayant le nom `shell` sera lancé
+    ```
+
+    ## services
+    Cette déclaration permet d'ajouter des services (container docker) de base pour vous aider dans vos `jobs`.
+    Par exemple si vous voulez utiliser une base de données pour tester votre application c'est dans `services` que vous le demanderez.
+
+    ```yaml
+    test:functional:
+      image: registry.gitlab.com/username/project/php:test
+      services:
+        - postgres # On appel le service `postgres` comme base de données
+     before_script:
+       - composer install -n
+     script:
+       - codecept run functional
+    ```
+
+    ## environment
+    Cette déclaration permet de définir un environnement spécifique au déploiement. Vous pouvez créer un environnement dans l'interface web de GitLab ou tout simplement laisser GitLab CI/CD le créer automatiquement.
+
+    Il est possible de spécifier :
+     - un `name`,
+     - une `url`,
+     - une condition `on_stop`,
+     - une `action` en réponse de la condition précédente.
+
+    ```yaml
+    ...
+
+    deploy:demo:
+      stage: deploy
+      environment: demo # Déclaration simple de l'environnement
+      script:
+        - make deploy
+
+    deploy:production:
+      environment: # Déclaration étendue de l'environnement
+        name: production
+        url: 'https://blog.eleven-labs/fr/gitlab-ci/' # Url de l'application
+      script:
+        - make deploy
+    ```
+
+    En déclarant des `environments` vous pouvez, depuis l'interface web de GitLab, déployer / redéployer votre application ou directement accéder à votre site si vous avez déclaré une `url`. Ceci se fait dans `Operations > Environment`.
+
+    ![CI Environment]({{site.baseurl}}/assets/2018-09-19-introduction-gitlab-ci/ci-environment.png)
+
+    Le bouton `undo` permet de redéployer, le bouton `external link` permet d'aller sur l'application et le bouton `remove` permet de supprimer l'environnement.
+
+    `on_stop` et `action` seront utilisés pour ajouter une action à la fin du déploiement, si vous souhaitez arrêter votre application sur commande. Utile pour les environnements de démonstration.
+
+    ```yaml
+    ...
+
+    deploy:demo:
+      script: make deploy
+      environment:
+        name: demo
+        on_stop: stop:demo
+
+    stop:demo: # Ce job pourra être visible et exécuté uniquement après le job `deploy:demo`
+      script: make stop
+      environment:
+        name: demo
+        action: stop
+    ```
+
+    Voici le lien officiel de la documentation sur les [environments](docs.gitlab.com/ee/ci/environments.html) si vous souhaitez aller plus loin.
+
+
+    ## variables
+    Cette déclaration permet de définir des variables pour tous les `jobs` ou pour un `job` précis.
+    Ceci revient à déclarer des variables d'environnement.
+
+    ```yaml
+    ...
+    variables: # Déclaration de variables pour tous les `job`
+      SYMFONY_ENV: prod
+
+    build:
+      script: echo ${SYMFONY_ENV} # Affichera "prod"
+
+    test:
+      variables: # Déclaration et réécriture de variables globales pour ce `job`
+        SYMFONY_ENV: dev
+        DB_URL: '127.0.0.1'
+      script: echo ${SYMFONY_ENV} ${DB_URL} # Affichera "dev 127.0.0.1"
+    ```
+
+    Comme pour `environment` je vous laisse regarder la documentation officielle sur les [variables](https://docs.gitlab.com/ee/ci/yaml/#variables) si vous souhaitez aller plus loin.
+
+    Il est aussi possible de déclarer des variables depuis l'interface web de GitLab `Settings > CI/CD > Variables` et de leur spécifier un environnement.
+
+    ![CI Variables]({{site.baseurl}}/assets/2018-09-19-introduction-gitlab-ci/ci-variables.png)
+
+    ## cache
+    Cette directive permet de jouer avec du cache. Le cache est intéressant pour spécifier une liste de fichiers et de répertoires à mettre en cache tout le long de votre pipeline. Une fois la pipeline terminée le cache sera détruit.
+
+    Plusieurs sous-directives sont possibles :
+     - paths : obligatoire, elle permet de spécifier la liste de fichiers et/ou répertoires à mettre en cache
+     - key : facultative, elle permet de définir une clé pour la liste de fichiers et/ou de répertoires. Personnellement je n’en ai toujours pas vu l’utilité.
+     - untracked : facultative, elle permet de spécifier que les fichiers ne doivent pas être suivis par votre dépôt git en cas d'un `push` lors de votre pipeline.
+     - policy : facultative, elle permet de dire que le cache doit être récupéré ou sauvegardé lors d’un job (`push` ou `pull`).
+
+    ```yaml
+    stages:
+      - build
+      - deploy
+
+    job:build:
+      stage: build
+      image: node:8-alpine
+      script: yarn install && yarn build
+      cache:
+        paths:
+          - build # répertoire mis en cache
+        policy: push # le cache sera juste sauvegardé, pas de récupération d'un cache existant
+
+    job:deploy:
+      stage: deploy
+      script: make deploy
+      cache:
+        paths:
+          - build
+        policy: pull # récupération du cache
+    ```
+
+    ## artifacts
+    Les artefacts sont un peu comme du cache mais ils peuvent être récupérés depuis une autre pipeline.
+    Comme pour le cache il faut définir une liste de fichiers ou/et répertoires qui seront sauvegardés par GitLab.
+    Les fichiers sont sauvegardés uniquement si le `job` réussi.
+
+    Nous y retrouvons cinq sous-directives possibles :
+     - paths : obligatoire, elle permet de spécifier la liste des fichiers et/ou dossiers à mettre en `artifact`
+     - name: facultative, elle permet de donner un nom à l'`artifact`. Par défaut elle sera nommée `artifacts.zip`
+     - untracked : facultative, elle permet d'ignorer les fichiers définis dans le fichier `.gitignore`
+     - when : facultative, elle permet de définir quand l'`artifact` doit être créé. Trois choix possibles `on_success`, `on_failure`, `always`. La valeur `on_success` est la valeur par défaut.
+     - expire_in : facultative, elle permet de définir un temps d'expiration
+
+    ```yaml
+    job:
+      script: make build
+      artifacts:
+        paths:
+          - dist
+        name: artifact:build
+        when: on_success
+        expire_in: 1 weeks
+    ```
+
+    ## dependencies
+    Cette déclaration fonctionne avec les `artifacts`, il rend un `job` dépendant d'un `artifact`. Si l'`artifact` a expiré ou a été supprimé / n'existe pas, alors la pipeline échouera.
+
+    ```yaml
+
+    build:artifact:
+      stage: build
+      script: echo hello > artifact.txt
+      artifacts: # On ajoute un `artifact`
+        paths:
+          - artifact.txt
+
+    deploy:ko:
+      stage: deploy
+      script: cat artifact.txt
+      dependencies: # On lie le job avec 'build:artifact:ko' qui n'existe pas donc la pipeline échouera
+        - build:artifact:fail
+
+    deploy:ok:
+      stage: deploy
+      script: cat artifact.txt
+      dependencies: # On lie le job avec 'build:artifact' qui existe donc la pipeline n'échouera pas
+        - build:artifact
+    ```
+
+    ## coverage
+    Cette déclaration permet de spécifier une expression régulière pour récupérer le code coverage pour un `job`.
+
+    ```yaml
+    ...
+
+    test:unit:
+      script: echo 'Code coverage 13.33'
+      coverage: '/Code coverage \d+\.\d+/'
+    ```
+
+    Le code coverage sera visible dans les informations du `job` dans l'interface web de GitLab :
+
+    ![CI Coverage]({{site.baseurl}}/assets/2018-09-19-introduction-gitlab-ci/ci-coverage.png)
+
+    > Si vous le souhaitez voici un autre article de notre blog écrit par l'astronaute [Pouzor](https://blog.eleven-labs.com/authors/pouzor/) sur le code coverage : [Ajouter le code coverage sur les MR avec avec GitLab-CI](https://blog.eleven-labs.com/fr/ajouter-le-code-coverage-sur-les-pr-avec-gitlab-ci/)
+
+    ## retry
+    Cette déclaration permet de ré-exécuter le `job` en cas d'échec. Il faut indiquer le nombre de fois où vous voulez ré-exécuter le `job`
+
+    ```yaml
+    job:retry:
+      script: echo 'retry'
+      retry: 5
+    ```
+
+    ## include
+    Pour cette fonctionnalité il vous faudra un compte premium. Cette fonctionnalité permet d'inclure des "templates".
+    les "templates" peuvent être en local dans votre projet ou à distance.
+
+    les fichiers sont toujours évalués en premier et fusionnés récursivement. Vous pouvez surcharger ou remplacer des déclarations des "templates".
+
+     - template en local
+
+    ```yaml
+    # template-ci/.lint-template.yml
+
+    job:lint:
+      stage: lint
+      script:
+        - yarn lint
+    ```
+
+     - template à distance
+
+    ```yaml
+    # https://gitlab.com/awesome-project/raw/master/template-ci/.test-template.yml
+
+    job:test:
+      stage: test
+      script:
+        - yarn test
+    ```
+
+     - manifeste principal
+
+    ```yaml
+    # .gitlab-ci.yml
+
+    include:
+      - '/template-ci/.lint-template.yml'
+      - 'https://gitlab.com/awesome-project/raw/master/template-ci/.test-template.yml'
+
+    stages:
+      - lint
+      - test
+
+    image: node:9-alpine
+
+    job:lint:
+      before_script:
+        - yarn install
+
+    job:test:
+      script:
+        - yarn install
+        - yarn unit
+    ```
+
+    Voici ce que gitlab CI/CD va interpréter :
+
+    ```yaml
+    stages:
+      - lint
+      - test
+
+    image: node:9-alpine
+
+    job:lint:
+      stage: lint
+      before_script: # on surcharge `job:lint` avec `before_script`
+        - yarn install
+      script:
+        - yarn lint
+
+    job:test:
+      stage: test
+      script: # on remplace la déclaration `script` du "template" https://gitlab.com/awesome-project/raw/master/template-ci/.test-template.yml
+        - yarn install
+        - yarn unit
+    ```
+
+    Ceci peut être intéressant dans le cas où votre manifeste est gros, et donc plus difficile à maintenir.
+
+    ## Anchors
+    Cette fonctionnalité permet de faire des templates réutilisables plusieurs fois.
+
+    ```yaml
+    .test_template: &test_template
+      stage: test
+      image: registry.gitlab.com/username/project/php:test
+      before_script:
+        - composer install -n
+      when: on_success
+
+    .db_template:
+      services:
+        - postgres
+        - mongo
+
+    test:unit:
+      <<: *test_template
+      script:
+        - bin/phpunit --coverage-text --colors=never tests/
+
+    test:functional:
+      <<: *test_template
+      services: *db_template
+      script:
+        - codecept run functional
+    ```
+
+    Voici ce que gitlab CI/CD va interpréter :
+
+    ```yaml
+    test:unit:
+      stage: test
+      image: registry.gitlab.com/username/project/php:test
+      before_script:
+        - composer install -n
+      script:
+        - bin/phpunit --coverage-text --colors=never tests/
+      when: on_success
+
+    test:functional:
+      stage: test
+      image: registry.gitlab.com/username/project/php:test
+      services:
+        - postgres
+        - mongo
+      before_script:
+        - composer install -n
+      script:
+        - codecept run functional
+      when: on_success
+    ```
+
+    # Ressources
+
+    - [GitLab Continuous Integration (GitLab CI/CD)](https://docs.gitlab.com/ee/ci/README.html)
+    - [Getting started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/README.html)
+    - [Configuration of your jobs with .gitlab-ci.yml](https://docs.gitlab.com/ee/ci/yaml/README.html)
+    - [GitLab Runner](https://docs.gitlab.com/runner/)
+- title: "GraphQL, le langage de requête de Facebook se dote de sa propre fondation open source"
+  subtitle: "Qui sera elle-même hébergée par la Linux Foundation"
+  body: >
+    ## Introduction
+
+    Salut les Astronautes, content de vous retrouver aujourd'hui après un petit moment sans avoir posté d'article.
+
+    L'article que je vous propose aujourd'hui change un peu de ceux que j'ai pu écrire par le passé. La volonté est ici de transmettre mes tips/bonnes pratiques à n'importe quel développeur motivé. C'est pourquoi on va aborder un sujet simple, mais sous un angle différent de d'habitude.
+
+    Allons maintenant dans le vif du sujet. Cet article se veut assez spécialisé, on va parler de **C**, oui, oui, j'ai bien dit **C**, vous savez ce langage procédural où l'on doit faire toutes les allocations à la mano et pareil pour la libération de la mémoire.<br/>
+    Il est super important ce langage, le Kernel de votre ordinateur est codé en **C**, même si c'est un peu galère on peut tout faire avec, et commencer par ce langage vous permettra d'être capable d'apprendre n'importe quel langage plus facilement.<br/>
+    C'est pourquoi mon école (ça ne me rajeunit pas tout ça), nous l'a fait apprendre en premier, et j'ai créé par mal de petits programmes avec. Le seul inconvénient à l'époque était que je n'avais pas encore le recul sur la programmation comme je peux l'avoir aujourd'hui. Je vous avoue que j'aurais bien aimé qu'à l'époque une âme bienveillante me guide pour ne pas faire les erreurs que j'ai pu faire.
+
+
+    C'est donc dans ce but que je fais cet article, pour vous donner un autre regard sur la programmation procédurale, on va donc ensemble essayer de pousser le langage et de "**L'objectiser**".
+
+
+    ## Mise en situation
+
+    Vous êtes étudiant en première année, vous avez un petit programme à faire qui doit être capable de gérer plusieurs utilisateurs et vous vous dites, bah tiens, ce serait bien de ne pas se faire un code hyper compliqué à maintenir, sait-on jamais, peut-être que j'aurais des nouvelles données pour mes utilisateurs dans le futur comme le téléphone fixe ou le code postal (ce sont des exemples).
+
+    Vous avez la solution 1, qui est de faire du **C** en mode normal, donc besoin de modifier beaucoup de code dès qu'une modification arrive, ou alors vous pouvez vous poser 30 minutes, et vous dire, essayons de faire les choses différemment. C'est là que j'interviens ;)
+
+    On va penser en mode objet pour du code procédural.<br/>
+    Pour faire ceci, on va utiliser 4 éléments du langage **C** :
+
+    - **Les structures**
+    - **Les pointeurs**
+    - **Les listes chainées**
+    - **Les pointeurs sur fonctions**
+
+    ### Les structures
+
+    Ce sont un peu les ancêtres des objets que vous connaissez, il n'y pas de notion de privé/publique, tout est en publique ; il n'y a pas de méthodes, elles peuvent juste contenir des **propriétés** qui sont soit des types primitifs soit des pointeurs.
+
+    ### Les pointeurs
+
+    On utilise beaucoup des références en code maintenant, mais il existe aussi les pointeurs, c'est une variable qui pointe vers un endroit spécifique dans la mémoire. Très utile, et tout notre système va reposer sur ça.
+
+    ### Les listes chainées
+
+    On va réutiliser les 2 notions vues précédémment. Une liste chainée est ensemble de structures qui sont liées ensemble par des pointeurs.
+
+    ### Les pointeurs sur fonctions
+
+    Je pense que vous vous en doutez vu ce que je vous ai décrit au dessus, ce sont des pointeurs non pas pour accéder à des données, mais à des fonctions qui ont été déclarées en mémoire.
+
+    Bon, c'est pas mal tout ça, on a vu les grosses notions, vous savez ce que l'on veut réaliser.<br />
+    Et si on passait au concret ? :)
+
+    ## Comment nous allons procéder :
+
+    Encore aujourd'hui, je vais vous fournir du Dummy code qui va se lancer, et réaliser une série d'opérations qui sera définie dans le code, donc pas vraiment d'interaction avec l'utilisateur. L'idée est de vous présenter le principe, à vous de l'utiliser dans des cas réels.
+
+    Ici mon objectif est d'être capable de créer des "utilisateurs" et de pouvoir en rajouter/supprimer facilement, au cas où mon code doive partir en run.
+
+    Pour ce faire, commencons par créer nos "modèles" de données.
+
+    ```C
+    typedef struct list list;
+    struct list
+    {
+        list *next;
+        void *obj;
+    };
+    ```
+
+    Je créé déjà ma structure de liste chainée, l'idée de reproduire un **Array** comme il existe dans quasiment tous les langages.
+    On a donc un pointeur qui va pointer vers le prochain maillon de ma liste (next) et un pointeur de type void* pour contenir tout type d'objets car je veux être capable de pouvoir utiliser ma liste chainée pour tout type de choses (c'est plutôt pratique en vrai).
+
+    ```C
+    typedef struct plop plop;
+    struct plop
+    {
+        void (*hello)(plop*);
+        char* name;
+    };
+    ```
+
+    Ensuite voici le vrai "modèle" pour nos objets utilisateurs. Une structure de type plop qui contient deux attributs, **name** pour le nom de mon utilisateur et un pointeur sur fonction **hello** qui prend en paramètre un "objet" de type **plop**.
+
+    Alors, on a notre structure de données, c'est bien, mais qu'est-ce que l'on fait maintenant?
+    Et bien, on va coder nos "méthodes" de liste chainée pour reproduire les **new**, **add**, **remove**, **getObjectAtIndex** que l'on utilise tous les jours avec nos langages modernes.
+
+    Commençons par **New** :
+
+    ```C
+    list* make_new_list() {
+        list* ptr = malloc(sizeof(list*));
+        return ptr;
+    }
+
+    plop* make_new_object(char *name) {
+        plop* obj = malloc(sizeof(plop*));
+        obj->name = name;
+        obj->hello = hello;
+        return obj;
+    }
+    ```
+
+    **make_new_list** nous sert à créer une nouvelle liste, et **make_new_object** nous sert à créer un nouvel utilisateur. Pour le moment rien de bien compliqué, à part peut-être dans **make_new_object** qui assigne **hello** avec un **hello** qui n'existe pas dans le scope de la fonction, on y reviendra un peu plus tard.
+
+    Passons maintenant aux fonctions utilitaires de la liste chainée :
+
+    ```C
+    void add_in_list(list* my_list, void* obj) {
+        if (my_list->obj == NULL) {
+            my_list->obj = obj;
+            return;
+        }
+        list* list_ptr = my_list;
+        while (list_ptr->next != NULL) {
+            list_ptr = list_ptr->next;
+        }
+        list* tmp_list_obj = malloc(sizeof(list*));
+        tmp_list_obj->obj = obj;
+        tmp_list_obj->next = NULL;
+        list_ptr->next = (void*)tmp_list_obj;
+    }
+
+    void remove_in_list(list* my_list, void* obj) {
+        list* tmp = my_list;
+        if (tmp->obj == obj) {
+            my_list = tmp->next;
+            return;
+        }
+        list* prev = NULL;
+        while (tmp) {
+            if (tmp->obj == obj) {
+                prev->next = tmp->next;
+                break;
+            }
+            prev = tmp;
+            tmp = tmp->next;
+        }
+    }
+
+    list* get_object_at_index(list* my_list, int index) {
+        int i = 0;
+        list* tmp = my_list;
+        while (tmp) {
+            if (i == index)
+                return tmp;
+            i++;
+            tmp = tmp->next;
+        }
+        return NULL;
+    }
+    ```
+
+    On crée la fonction **add_in_list** qui correspond au **Add**, la fonction **remove_in_list** qui correspond au **Remove** et la fonction **get_object_at_index** qui correspond au **GetObjectAtIndex**.<br/>
+    Veuillez bien noter que ces 3 méthodes prennent en paramètres des pointeurs qui ne sont pas typés ```C(void*)```, ce qui veut dire que vous pouvez réutiliser ces 3 fonctions dans tous vos projets, donc gardez les bien précieusement :)
+
+    - Bon bah, c'est pas mal tout ça, on a nos "modèles", nos fonctions pour jouer avec, on est parés non ?
+    - Bah euh non...
+    - Ah ? J'ai oublié un truc ?
+    - Bah t'avais pas parlé de la fonction **hello** au dessus ?
+    - Ah mais si bien-sûr, qu'est-ce que je ferais sans vous les astronautes ?
+
+    ```C
+    void print_str(char* str) {
+        write(1, str, strlen(str));
+    }
+
+    void hello(plop* obj) {
+        print_str("Hello, my name is: ");
+        print_str(obj->name);
+        print_str("\n");
+    }
+
+    void print_list(list* my_list) {
+        list* tmp = my_list;
+        plop* obj = NULL;
+        while (tmp) {
+            obj = (plop*)(tmp->obj);
+            obj->hello(obj);
+            tmp = tmp->next;
+        }
+    }
+    ```
+
+    En fait, il nous manquait un peu plus que juste la fonction **hello**.<br />
+    On va rajouter ces 3 fonctions qui dans l'ordre font :
+    - Afficher une chaine de caractère
+    - Prendre un "objet" **plop** en paramètre et afficher son nom sur la console.
+    - Dérouler notre liste chainée et appeler la fonction **hello** sur chaque "objet".
+
+    On revient sur la fonction **hello**, cette fonction est maintenant déclarée dans notre code, et dans la fonction **make_new_object** on assigne le pointeur sur fonction de la structure fraîchement créée sur cette fonction qui a une adresse en mémoire. On doit juste passer "l'objet" en paramètre car on est pas capable d'appeler directement la méthode dessus. Cette idée m'est venue quand j'ai fait du **Python**, en effet, le self est automatiquement passé dans chaque méthode et on fait nos appels dessus.
+
+    ## Le rendu final
+
+    Comme je vous ai dit, ce code a pour vocation de vous donner des idées et n'interagit pas vraiment avec l'utilisateur. Je vais donc vous dumper tout le code d'un coup, comme ça rien de plus simple pour vous, vous avez juste à le tester (par exemple sur [ideone](https://ideone.com/){:rel="nofollow noreferrer"})
+
+    ```C
+    #include <stdlib.h>
+    #include <unistd.h>
+    #include <string.h>
+
+    typedef struct plop plop;
+    struct plop
+    {
+        void (*hello)(plop*);
+        char* name;
+    };
+
+    typedef struct list list;
+    struct list
+    {
+        list *next;
+        void *obj;
+    };
+
+    plop* make_new_object(char *);
+    list* make_new_list();
+    void print_str(char* str);
+    void hello(plop* obj);
+    void add_in_list(list* my_list, void* obj);
+    void remove_in_list(list* my_list, void* obj);
+    list* get_object_at_index(list* my_list, int index);
+    void print_list(list* my_list);
+
+    int main(int ac, char **av) {
+        list* my_list = make_new_list();
+        add_in_list(my_list, make_new_object("Pierre"));
+        add_in_list(my_list, make_new_object("Paul"));
+        add_in_list(my_list, make_new_object("Jacques"));
+        print_list(my_list);
+        return 0;
+    }
+
+    list* make_new_list() {
+        list* ptr = malloc(sizeof(list*));
+        return ptr;
+    }
+
+    plop* make_new_object(char *name) {
+        plop* obj = malloc(sizeof(plop*));
+        obj->name = name;
+        obj->hello = hello;
+        return obj;
+    }
+
+    void print_str(char* str) {
+        write(1, str, strlen(str));
+    }
+
+    void hello(plop* obj) {
+        print_str("Hello, my name is: ");
+        print_str(obj->name);
+        print_str("\n");
+    }
+
+    void add_in_list(list* my_list, void* obj) {
+        if (my_list->obj == NULL) {
+            my_list->obj = obj;
+            return;
+        }
+        list* list_ptr = my_list;
+        while (list_ptr->next != NULL) {
+            list_ptr = list_ptr->next;
+        }
+        list* tmp_list_obj = malloc(sizeof(list*));
+        tmp_list_obj->obj = obj;
+        tmp_list_obj->next = NULL;
+        list_ptr->next = (void*)tmp_list_obj;
+    }
+
+    void remove_in_list(list* my_list, void* obj) {
+        list* tmp = my_list;
+        if (tmp->obj == obj) {
+            my_list = tmp->next;
+            return;
+        }
+        list* prev = NULL;
+        while (tmp) {
+            if (tmp->obj == obj) {
+                prev->next = tmp->next;
+                break;
+            }
+            prev = tmp;
+            tmp = tmp->next;
+        }
+    }
+
+    list* get_object_at_index(list* my_list, int index) {
+        int i = 0;
+        list* tmp = my_list;
+        while (tmp) {
+            if (i == index)
+                return tmp;
+            i++;
+            tmp = tmp->next;
+        }
+        return NULL;
+    }
+
+    void print_list(list* my_list) {
+        list* tmp = my_list;
+        plop* obj = NULL;
+        while (tmp) {
+            obj = (plop*)(tmp->obj);
+            obj->hello(obj);
+            tmp = tmp->next;
+        }
+    }
+    ```
+
+    ## It's time to run the code
+
+    Bon, on a enfin tout en place, il suffit juste de runner notre bout de code.
+    Ici, pas de paillettes et de strass, juste 3 petites sorties console :
+
+    ```Shell
+    Hello, my name is: Pierre
+    Hello, my name is: Paul
+    Hello, my name is: Jacques
+    ```
+
+    Plutôt cool non ? :)
+
+    - Attends, on a pondu toutes ces lignes de code juste pour ça ?
+    - Oui
+    - Mais hum, elle est où la magie ?
+    - La magie n'est pas tout le temps visuelle, parfois c'est juste comment c'est fait derrière. En tant que développeurs vous devez vous challenger pour ne pas faire les choses d'une seule et même manière, varier les plaisirs.
+
+    ## Mais pourquoi faire tout ça ?
+
+    Vous devez vous dire, mais pourquoi faire tout ça ?<br/>
+    Pour différentes raisons.<br/>
+    La première étant que c'est très, très fun. Imaginez montrer ce code à votre binôme de travail, et lui dire, tiens si on faisait le projet comme ça ?<br/>
+    Aussi, vous arrivez en soutenance avec une telle structure de code, le correcteur va se dire, ah tiens, ça sort de l'ordinaire, est-ce que l'on pourrait pousser encore plus loin et vous donner des vrais conseils pour la suite de vos projets.<br/>
+    Cela rend le code beaucoup plus lisible à mon goût aussi, on a quelques fonctions complexes et le reste est très facilement compréhensible.
+    Cela va vous apprendre à mieux découper votre code aussi et architecturer vos projets avec beaucoup moins de dépendance.
+
+    Voilà, comme je l'ai dit au début, cet article est différent des autres, il est plus réservé à des gens qui débutent dans la programmation. J'espère que cela vous aura plu. N'hésitez surtout pas à me faire des retours dans les commentaires.
+
+    Allez, salut les astronautes :)
+- title: "Les processeurs tensoriels de Google parlent maintenant Julia"
+  subtitle: "XLA.jl est une manière très simple de lancer ses calculs sur un TPU"
+  body: >
+    ## Préambule
+
+    Comme vu dans l’article précédent, une directive est un marqueur HTML interprété par AngularJS via son $compile.
+    Nous allons donc nous intéresser ici aux divers moyens nous permettant d’avoir une gestion la plus fine possible des
+    transformations de nos directives.
+
+    ## Manipulation du contenu
+
+    Nous pouvons donc agir à quatre moments clefs de la vie d’une directive :
+
+    - Le compile n’est appelé qu’une seule fois lors de l’initialisation. C’est ici que l’on manipule le template de la
+    directive en amont, souvent dans un but d’optimisation.
+    - Le controller est appelé quand une directive est instanciée. Il permet d’initialiser le scope de la directive et de
+    définir les méthodes de notre directive qui pourront éventuellement être partagées avec d’autres controllers extérieurs.
+    - Le pre-link est très rarement utilisé, sa principale particularité est que les pre-link sont appelés en héritage parent
+    vers les enfants, là ou les post-link sont appelés en remontant des enfants vers les parents.
+    - Le post-link sera votre principal outil car à ce moment là, le contenu est prêt et disponible pour agir dessus.
+    C’est donc ici que l’on pourra par exemple manipuler le DOM finalisé, attacher des événements, attacher des watchers sur
+    le scope, observer les attributs de la directive ...
+
+    Ci-dessous une directive implémentant tous ces concepts :
+
+    ```js
+    angular.module('exemple', [])
+      .directive('myDirective', function() {
+        return {
+          restrict: 'EA',
+          controller: function($scope, $element, $attrs, $transclude) {
+            // controller code
+          },
+          compile: function(tElement, tAttributes, transcludeFn) {
+            // compile code
+            return {
+              pre: function(scope, element, attributes, controller, transcludeFn) {
+                // pre-link code
+              },
+              post: function(scope, element, attributes, controller,transcludeFn) {
+                // post-link code
+              }
+            };
+          }
+        };
+      });
+    ```
+
+    La fonction pre-link étant rarement utile, nous pouvons la supprimer. Dans ce cas le compile doit retourner la fonction
+    post-link.
+
+    ```js
+    angular.module('exemple', [])
+      .directive('myDirective', function() {
+        return {
+          restrict: 'EA',
+          controller: function($scope, $element, $attrs, $transclude) {
+            // controller code
+          },
+          compile: function(tElement, tAttributes, transcludeFn) {
+            // compile code
+            return function(scope, element, attributes, controller,transcludeFn) {
+              // post-link code
+            }
+          }
+        };
+      });
+    ```
+
+    Si l'on ne souhaite effectuer aucune manipulation du template, la fonction compile devient inutile Dans ce cas il est
+    possible de déclarer uniquement un link contenant la fonction post-link.
+
+    ```js
+    angular.module('exemple', [])
+      .directive('myDirective', function() {
+        return {
+          restrict: 'EA',
+          controller: function($scope, $element, $attrs, $transclude) {
+            // controller code
+          },
+          link: function(scope, element, attributes, controller,transcludeFn) {
+            // post-link code
+          }
+        };
+      });
+    ```
+
+    ## Transclusion
+
+    Il peut arriver qu'une directive doive modifier les éléments du DOM se trouvant à l’intérieur d'elle.
+    Dans ce cas, la transclusion est notre amie, et nous permet de récupérer le contenu interne à la directive pour le
+    manipuler.
+
+    ### Mise en place
+
+    Pour se faire il suffit de spécifier à sa directive qu'elle souhaite utiliser la transclusion.
+
+    ```js
+    angular.module('exemple', [])
+      .directive('myDirective', function () {
+        return {
+          restrict: 'EA',
+          transclude: true,
+          scope: {
+            chapo: @
+          },
+          template: template.html
+          link: function(scope, element, attributes, controller,transcludeFn) {
+            // post-link code
+          }
+        };
+      });
+    ```
+
+    Mais cela seul ne suffit pas, il vous faudra aussi définir dans son template l'emplacement où la transclusion sera faite
+
+    ```html
+    <div>
+      <h2>{{chapo}}</h2>
+      <div ng-transclude></div>
+    </div>
+    ```
+
+    Dans certains cas plus complexes, il faudra passer par la fonction $transclude, qui est un peu plus complexe mais pas
+    insurmontable.
+
+    Nous voilà donc au terme de notre promenade dans le monde merveilleux des directives sous Angular 1.x. Souvent un peu
+    complexe à prendre en main au début, on peut très rapidement en devient friand parfois de façon un peu excessive.
+
+    Si je peux vous donner un conseil assurez-vous que la fonctionnalité va être répété sinon il peut être contre-productif
+    de faire une directive.
+
+    En complément n'hésitez à aller voir [le guide](https://docs.angularjs.org/guide/directive){:rel="nofollow noreferrer"} du site officiel, et bon
+    Angular à tous !
+- title: "Sortie de Unreal Engine 4.21. Au menu : support du moteur de particules Niagara sur Switch"
+  subtitle: "Cache des shaders sur mobiles et plus"
+  body: >
+    Nous partageons très régulièrement sur ce blog notre expertise technique autour du développement et de l’architecture web et mobile. Aujourd’hui, j’aimerais aborder un autre sujet, tout aussi important : notre **expertise méthodologique**.
+
+    Chez Eleven Labs, notre méthodologie agile repose principalement sur la méthode **SCRUM**. J’aurais l’occasion de partager d’autres articles pour décrire cette méthodologie et ses outils plus en détails. Nous allons parler ici d’un must-have de toutes les méthodologies agiles, très probablement la cérémonie agile la plus mise en pratique : la **rétrospective**.
+
+    Dans cet article, on parlera plus particulièrement d’une rétrospective de sprint SCRUM dans le cadre d’un projet informatique mais la plupart des outils mentionnés ici sont utilisables pour n’importe quelle méthodologie agile et la majorité des projets.
+
+    [![Rétrospective de fin d'un Sprint SCRUM](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/eleven-labs-scrum-sprint-focus-retrospective.png)](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/eleven-labs-scrum-sprint-focus-retrospective.png){: .center-image .no-link-style}
+
+    *<center>Rétrospective de fin d'un Sprint SCRUM</center>*
+
+    Objectif ?
+    ==========
+
+    En fin de sprint, ou fin de cycle de développement, quand le but de la démonstration (“Sprint review”) est d’analyser l’incrément de produit développé pendant cette itération, i.e. le “quoi”, **le but de la rétrospective est d’analyser** les processus et outils utilisés pour arriver à cette fin, i.e. **le “comment”**.
+
+    L’objectif final est donc de rendre l’équipe encore **plus productive** pour la prochaine itération. Autrement dit, le but est d’**augmenter la vélocité** (nombre de points livrés par l’équipe à chaque itération) **et la qualité** du produit.
+
+    Concrètement, les discussions de cette réunion doivent ainsi permettre d’établir un **plan d’actions d’améliorations**, que l’équipe doit s’engager à suivre lors de la prochaine itération. Ces actions peuvent être décrites sous la forme de “Stories” techniques ou “improvements” priorisés au sein d’un backlog dédié, et chacune peut être assignée à un membre en particulier qui s’engage alors à réaliser cette tâche. Cela implique qu’une capacité dédiée doit être réservée pour pouvoir gérer ces actions en parallèle des actions de production (“User Stories” fonctionnelles du Sprint).
+
+    Quand ?
+    =======
+
+    Chaque jour nous avons bien-sûr des occasions d’améliorer nos outils ou process. Cependant toute équipe se laisse assez facilement emporter par les urgences du quotidien et il est donc important de **dédier un moment régulièrement** pour que l’équipe prenne du recul et trouve le moyen de s’améliorer sur le long terme.
+
+    Ce moment dédié se prend donc généralement **à la fin de chaque itération** (Sprint ou Release par exemple), pour repartir sur de bonnes bases à la prochaine.
+
+    On parle ainsi de cycle d’**amélioration continue** : à chaque itération, on **apprend** de nos expériences et on **adapte** notre organisation au fur et à mesure.
+
+    Que ce soit en début de projet, ou même après plusieurs années, une équipe peut toujours faire mieux. Ainsi il vaut mieux avoir une équipe capable d’apprendre et de toujours s’améliorer plutôt qu’une qui reste au même niveau.
+
+    Combien de temps ?
+    ==================
+
+    Comme chacune des réunions agiles, pour plus d'efficacité, la rétrospective doit toujours être définie et limitée dans le temps : **time-boxée**.
+
+    Évidemment pour que cette **durée maximale** soit respectée, il faut que celle-ci soit **annoncée** **clairement** avant de commencer. De plus, un membre de l’équipe peut jouer le rôle de “**gardien du temps**” qui devra informer régulièrement l’équipe du temps passé et restant. Attention, son rôle est seulement de notifier l’équipe et en aucun cas de couper les conversations pour imposer son timing.
+
+    On convient généralement que ce rituel ne doit pas dépasser 45 minutes par semaine de Sprint, soit **1 heure 30 pour des itérations de 2 semaines**. Il peut être bien de réduire cette durée maximale à 1 heure pour une équipe plus expérimentée.
+
+    Pour les équipes un peu plus nombreuses, si on veut réduire cette durée totale tout en laissant la parole à chacun, il peut être bien de time-boxer le temps de parole de chacun, ou de diviser l’équipe en plusieurs petits groupes. Nous pourrons détailler ces techniques par la suite.
+
+    Qui participe ?
+    ===============
+
+    Tous les membres de l’**équipe de réalisation (développeurs, testeurs…) ainsi que le Product Owner** (ou Product Manager) participent à cette rétrospective. Ainsi l’équipe profite de ce rituel pour améliorer ses process de développement et le Product Owner va chercher à améliorer sa communication ou l’expression de ses besoins, pour que l’ensemble de l’organisation soit plus productive.
+
+    De manière générale, toute **partie prenante** qui travaille au quotidien en relation avec l’équipe de réalisation peut participer. Par exemple, il peut être intéressant de faire participer le responsable de l’infrastructure qui livre en production le produit de l’équipe, si celui-ci n’est pas intégré dans l’équipe de réalisation. Il est important que celui-ci soit impliqué le plus possible dans ce cycle d’amélioration continue puisque, pour que l’équipe soit plus productive, il faut non seulement qu’elle produise plus, mais également que son produit soit livré sur l’environnement final.
+
+    De son côté, le **SCRUM Master** joue le rôle de **facilitateur** : il fournit les outils et aide l’équipe à s’organiser pour mener la discussion et établir son plan d’actions. Son rôle est important **surtout en début** de projet mais, avec de l’expérience, l’**équipe auto-organisée** devrait être capable de mener cette rétrospective sans lui. Cela permet ainsi au SCRUM Master de se concentrer sur les perturbations extérieures à l’équipe plutôt que sur les décisions d’améliorations internes.
+
+    Quoi qu’il en soit, pour que le plan d’actions de fin de rétrospective soit réalisable et que l’équipe puisse s’engager sur son application, il est préférable qu’elle l’ait établi sans contrainte et qu’il n’ait donc pas été imposé par la direction. Il vaut donc mieux qu’**aucun manager** ne participe à cette réunion. Si le rôle de SCRUM Master est tenu par un chef de projet ou manager, il faudra donc que celui-ci se limite à son rôle de facilitateur et laisse l’**équipe décider librement de ses actions**.
+
+    Quels outils ?
+    ==============
+
+    Pour bien animer cette rétrospective, il existe différents outils permettant de mener la discussion jusqu’à l’établissement du plan d’actions d’améliorations. En voici quelques uns, à utiliser à différentes étapes de la rétrospective :
+
+    ### Pour récolter les données (“gathering data”)
+
+    La première étape est de lancer la discussion puis de recueillir les avis de chacun et obtenir une bonne vision de ce qui s’est bien ou moins bien passé pendant cette itération.
+
+    -   **Safety Check**
+
+    Avant de commencer la moindre discussion, il peut être bien d’avoir une vision globale du ressenti de chaque membre de l’équipe. Ainsi on peut demander à chacun de se donner une note de 1 à 5 :
+
+    -   5 : “Je me sens à l’aise pour parler de n’importe quel sujet”
+    -   4 : “Je pourrai parler de quasiment tout, seulement quelques sujets peuvent être difficiles à aborder”
+    -   3 : “Je pourrai discuter de quelques sujets, mais d’autres seront difficiles à exprimer”
+    -   2 : “Je ne dirai pas grand chose et laisserai les autres remonter les problèmes”
+    -   1 : “Je ne pourrai discuter de rien, et serai d’accord avec tout ce qui sera dit ou imposé”
+
+    Pour que ces notes soient objectives, il faut que celles-ci soient données anonymement. Le facilitateur peut ensuite rassembler les résultats de ce vote et les communiquer à l’équipe qui pourra les interpréter.
+
+    Le but est bien sûr d’obtenir une note moyenne la plus haute possible pour faire avancer au mieux la discussion.
+
+    Si l’équipe n’est globalement pas suffisamment à l’aise pour discuter des sujets, éventuellement durs, qui doivent être abordés, le facilitateur pourra rassurer les membres de l’équipe en ré-expliquant l’objectif de ces rétrospectives et de l’amélioration continue. Il pourra aussi être envisagé de diviser l’équipe en petits groupes pour favoriser le dialogue. Il se peut également que ce soit la présence d’un manager qui diminue la note globale de confiance de l’équipe.
+
+    -   **Mood board**
+
+    De la même façon, les 5 notes du Safety Check précédent peuvent être représentées de manières plus ludiques à l’aide d’images, de personnages ou smileys plus ou moins confiants.
+
+    [![](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/astronauts-mood-board.jpg)](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/astronauts-mood-board.jpg){: .center-image .no-link-style}
+
+    *<center>Mood Board des astronautes Eleven Labs</center>*
+
+    -   **One word**
+
+    En cas de problème majeur, il se peut qu’un seul mot suffise pour lancer la discussion. Avec l’expérience, le facilitateur sera capable de ressentir ce genre de situation avant même de débuter la rétrospective et pourra proposer aux membres de l’équipe d’inscrire un seul mot sur un post-it, pendant une durée limitée, avant que chaque membre l’exprime et l’explique devant toute l’équipe.
+
+    -   **Post-it répartis entre plusieurs catégories**
+
+    La manière la plus courante, et aussi souvent la plus efficace, est de demander à chacun de synthétiser ses idées sur des post-it suivant différentes catégories :
+
+    -   “Points positifs” et “Points négatifs” : deux catégories évidentes : ce qui s’est bien passé et qui s’est mal déroulé pendant cette itération.
+    -   ou la variante : “Start” (ce qu’il faut commencer à faire lors du prochain sprint), “Stop” (ce qu’il ne faut plus faire), “Continue” (ce qu’il faut continuer à bien faire)
+    -   ou équivalent : "More of" and "Less of"
+    -   ou “Glad”, “Sad”, “Mad” qui portent bien leur nom
+    -   ou variante métaphorique du bateau, symbolisant l’équipe : le facilitateur dessine sur un paper board ou tableau un bateau à moitié sous l’eau et à moitié à la surface, avec sa voile qui lui permet d’avancer, son ancre qui le ralentit et le tire vers le fond, et le vent qui permettrait de faire encore accélérer le bateau.
+    -   Il est aussi possible de laisser l’équipe inventer ses propres catégories. Chez Eleven Labs, on aime bien celles-ci : **“⊕ Points positifs”, “⊖ Points négatifs”, “✨ Idées d’amélioration”, “❤ Remerciements personnalisés”**
+
+    [![](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/post-it-retrospective.jpg)](/assets/2017-02-16-amelioration-continue-comment-animer-vos-retrospectives-agiles/post-it-retrospective.jpg){: .center-image .no-link-style}
+
+    *<center>Post-it catégorisés lors de nos rétrospectives chez Eleven Labs</center>*
+
+    Quelques soient ces catégories, l’idée est de définir une courte durée (5 ou 10 minutes) pendant laquelle chacun met ses idées sur ses post-it. Ensuite chacun à son tour va les coller sur le tableau, dans la bonne catégorie, et expliquer à l’équipe chacun de ses points. Le dernier à s’exprimer, ou autre volontaire, pourra ensuite regrouper les idées similaires pour donner une meilleure vision globale.
+
+    Pour les équipes plus nombreuses, ce genre d’exercice peut prendre trop de temps, il peut alors être bien de limiter le nombre de post-it autorisés par personne pour forcer chacun à être plus concis. De la même manière, on peut définir un temps de parole maximum par personne pour présenter ses idées.
+
+    -   **Guess Who?**
+
+    De manière générale, pour redynamiser les équipes qui peuvent être habituées à une unique forme de rétrospective, il peut être intéressant de changer régulièrement la technique utilisée parmi celles décrites précédemment.
+
+    De plus, pour favoriser encore la communication et la compréhension des problématiques rencontrées par chacun, on peut pratiquer cet exercice : le facilitateur demande à chaque membre d’écrire ses points (répartis par catégories comme décrit précédemment) et de les lui remettre. Le facilitateur peut ensuite faire passer ces post-it à un autre membre, sans indiquer qui les a écrits. Celui-ci devra alors les interpréter et les expliquer devant l’équipe comme s’il les avait écrits lui-même, avant d’essayer de deviner qui les a initialement décrits.
+
+    Toujours pour inciter chacun à se mettre à la place des autres, une autre variante consiste à demander à chacun d’écrire deux mots, décrivant son ressenti, sur deux post-it différents qu’il passera à ses deux voisins, à sa droite et à sa gauche. Ensuite chacun, à son tour, essaie d’interpréter et expliquer ces deux mots reçus.
+
+    -   **Timeline**
+
+    Pour récolter toutes les données d’une itération, on peut aussi demander à l’équipe de retracer l’historique du Sprint, depuis le planning jusqu’à la rétrospective. Ainsi chacun vient ajouter ses faits marquants sur la ligne temporelle tracée sur le tableau, en expliquant chaque fait, positif ou négatif.
+
+    Une itération de type Sprint SCRUM étant de courte durée, cette technique n’est pas toujours cohérente, puisqu’il n’est pas toujours simple de placer au bon endroit sur la timeline un fait du sprint. Cet exercice est donc généralement plutôt utilisé sur une échelle de temps plus importante, pour une rétrospective release ou un projet entier par exemple.
+
+    ### Pour trouver les causes des problèmes et leurs solutions
+
+
+    Les techniques précédentes permettent ainsi d’avoir une bonne vision des problèmes rencontrés par l’équipe. Avant d’établir un plan d’actions d’améliorations, il nous faut trouver des solutions pour chacun de ces points.
+
+    -   **Bisounours**
+
+    À l’étape précédente, nous avons vu que chacun pouvait, de différentes façons, exprimer ses différents points positifs et négatifs devant l’équipe.
+
+    Quand il est nécessaire de re-motiver l’équipe, le facilitateur peut demander à chacun d’aller un peu plus loin dans son analyse individuelle en demandant de transformer chaque point négatif en un point positif et au moins une idée d’amélioration. Ainsi chacun ira présenter exclusivement des points positifs et des améliorations devant l’équipe.
+
+    En plus de remonter le moral des troupes, cette technique permet d’arriver plus rapidement à la recherche de solutions qui permettront d’établir notre plan d’actions.
+
+    -   **ORID Focused Conversation Method**
+
+    Le but de cette méthode est de guider l’équipe en lui posant successivement 4 types de questions, pour qu’elle décide ensemble des actions à mener. Voici ces 4 étapes :
+
+    -   **O** : “Objective” : On se concentre ici sur les **faits objectifs** : “Que s’est-il passé ?”
+    -   **R** : “Reflective” : “Quel est votre **ressenti** par rapport à ces faits ?”
+    -   **I** : “Interpretive” : “Quelle est la signification ? Quelle est votre **interprétation** ? Qu’est ce que ça signifie ?”
+    -   **D** : “Decisional” : Enfin, en dernière étape, on en arrive aux **décisions** : “Quelles actions peuvent être envisagées pour éviter cela à l’avenir ? Sur quoi peut-on s’engager ?”
+
+    Ce framework de facilitation permet de guider la discussion, de la rendre très constructive et donc d’obtenir un plan d’actions d’améliorations rapidement.
+
+    -   **Five Times Why exercise**
+
+    Enfin, cette dernière technique très simple consiste à demander “Pourquoi” cinq fois de suite quand un problème a été identifié, jusqu’à en arriver à la vraie cause du problème, qui est souvent masquée. Une fois la cause “racine” connue, on peut plus facilement trouver la solution à apporter.
+
+    ### Pour définir le plan d’actions
+
+    Si vous avez bien pratiqué les techniques précédentes, vous avez maintenant une bonne vision des problèmes rencontrés par l’équipe et avez identifié de potentielles solutions et améliorations. Ils s’agit donc maintenant de vous mettre d’accord sur un plan d’actions.
+
+    Rappelons-le, l’équipe auto-organisée doit décider seule de ces actions et elle s’engage à les réaliser dans les temps. Ces décisions ne doivent pas être imposées par un manager.
+
+    Il est préférable de privilégier la qualité à la quantité d’actions : il sera donc suffisant de s’engager sur deux ou trois actions vraiment impactantes à réaliser d’ici la prochaine rétrospective.
+
+    -   **Relire le plan d’actions de la précédente rétrospective**
+
+    Une des première chose à faire, avant de décider du prochain plan d’actions est de vérifier que toutes les actions de la précédente rétrospective ont bien été réalisées. Si non, peut-être qu’elles ne sont plus d’actualité ou que l’équipe n’a pas pu consacrer assez de temps à ces actions d’amélioration ou que personne n’a été assigné à cette tâche. Dans tous les cas, cette relecture donnera des indications et peut-être d’autres idées avant d’établir le prochain plan d’actions.
+
+    -   **Vote**
+
+    Si beaucoup d’idées d’améliorations ont été mentionnées, il va donc falloir sélectionner les meilleures ! Pour ce faire, le plus simple est de demander à chacun de donner son vote sur ses idées préférées : chacun a le droit de voter pour au plus 3 idées par exemple, puis les 3 idées ayant obtenues le plus de votes sont ensuite sélectionnées.
+
+    -   **2 second improvement (2 second lean)**
+
+    Il n’existe pas de petites améliorations ! Si vous manquez d’idées ou que tous vos process et outils sont déjà bien en place, essayez de penser aux petites améliorations qui pourraient vous faire gagner 2 secondes tous les jours : raccourcis clavier, tâches automatisées...
+
+    Conclusion
+    ==========
+
+    J’espère que cet article vous aura donné de nouvelles idées pour animer vos prochaines rétrospectives, pour ceux d’entre vous qui ont déjà l’habitude d’en faire. Il peut même être intéressant pour vous de faire des rétrospectives de rétrospectives, pour rendre ces dernières toujours plus ludiques et productives !
+
+    Pour les autres, j’espère que cela vous aura donné l’envie de pratiquer ces exercices pour mettre en place vos premiers cycles d’amélioration continue. Même s’il peut vous sembler délicat de parler ainsi librement des problèmes que vous rencontrez, potentiellement avec d’autres membres de votre équipe, lancez-vous. Discutez sans contrainte, et vous verrez, quand la discussion est bien menée avec ces outils, c’est toujours très productif !
+
+    N’hésitez pas à partager vos expériences de rétrospectives en commentaires ci-dessous.
+
+    **Sources :**
+
+    - [Sprint Retrospective Meeting](http://scrumtrainingseries.com/SprintRetrospectiveMeeting/SprintRetrospectiveMeeting.htm){:rel="nofollow noreferrer"}
+    - [Retrospective Wiki](http://retrospectivewiki.org/){:rel="nofollow noreferrer"}
+    - [Retrospective Agiles](http://retrospectives-agiles.fr/){:rel="nofollow noreferrer"}
+    - [Inspect and Adapt](http://www.scaledagileframework.com/inspect-and-adapt/){:rel="nofollow noreferrer"}
+- title: "Apprendre à mettre en place un STS (Secure Token Service) avec IdentityServer4"
+  subtitle: "Pour sécuriser ses applications .NET, par Hinault Romaric"
+  body: >
+    # Introduction
+
+    Consul est un outil développé en Go par la société HashiCorp et a vu le jour en 2013.
+    Consul a plusieurs composants mais son objectif principal est de regrouper la connaissance des services d'une architecture (service discovery) et permet de s'assurer que les services contactés sont toujours disponibles en s'assurant que la santé de ces services est toujours bonne (via du health check).
+
+    Concrètement, Consul va nous apporter un serveur DNS permettant de mettre à jour les adresses IP disponibles pour un service, en fonction de ceux qui sont en bonne santé. Ceci permet également de faire du load balancing bien que nous verrons qu'il ne permette pas pour le moment de préférer un service à un autre.
+    Il offre également d'autres services tel que du stockage clé/valeur, nous l'utiliserons dans cet article afin que Docker Swarm y stocke ses valeurs.
+
+    Afin de clarifier la suite de cet article, voici les ports utilisés par Consul :
+
+    * `8300` (+ `8301` et `8302`) : Echanges via RPC,
+    * `8400` : Echanges via RPC par le CLI,
+    * `8500` : Utilisé pour l'API HTTP et l'interface web,
+    * `8600` : Utilisé pour le serveur DNS.
+
+    La suite de cet article va se concentrer sur la partie service discovery et failure detection. Nous allons pour cela mettre en place un cluster Docker Swarm possédant l'architecture suivante :
+
+    ![](/assets/2017-02-22-consul-service-discovery-failure-detection-2/consul-archi.png)
+
+    Nous aurons donc 3 machines Docker :
+
+    * Une machine avec `Consul` (Swarm Discovery),
+    * Une machine étant notre "`node 01`" avec un service HTTP (Swarm),
+    * Une machine étant notre "`node 02`" avec un service HTTP (Swarm).
+
+    Nous mettrons également sur nos deux nodes (cluster Docker Swarm) un container Docker pour Registrator, permettant de faciliter l'enregistrement de nos services Docker sur Consul.
+
+    Pour plus d'informations concernant `Registrator`, vous pouvez vous rendre sur : [https://gliderlabs.com/registrator/](https://gliderlabs.com/registrator/){:rel="nofollow noreferrer"}
+    Commençons à installer notre architecture !
+
+    # Service discovery
+
+    ## Première machine : Consul (Swarm Discovery)
+
+    Nous allons commencer par créer la première machine : notre Consul.
+
+    Pour cela, tapez :
+
+    ```bash
+    $ docker-machine create -d virtualbox consul
+    ```
+
+    Une fois la machine prête, préparez votre environnement pour utiliser cette machine et lancez un container Consul :
+
+    ```bash
+    $ eval $(docker-machine env consul)
+    $ docker run -d \
+        -p 8301:8301 \
+        -p 8302:8302 \
+        -p 8400:8400 \
+        -p 8500:8500 \
+        -p 53:8600/udp \
+        consul
+    ```
+
+    Nous avons maintenant notre Consul prêt à recevoir nos services et nos prochaines machines membres de notre cluster Docker Swarm.
+
+    Vous pouvez d'ailleurs ouvrir l'interface web mise à disposition en obtenant l'ip de la machine Consul :
+
+    ```bash
+    $ docker-machine ip consul
+    <ip-obtenue>
+    ```
+
+    Puis ouvrez dans votre navigateur l'URL : `http://<ip-obtenue>:8500`.
+
+    ## Deuxième machine : Node 01
+
+    Nous allons maintenant créer la machine correspondant au premier node de notre cluster Docker Swarm qui se verra également obtenir le rôle de master de notre cluster Swarm (il en faut bien un).
+
+    ```bash
+    $ docker-machine create -d virtualbox \
+        --swarm \
+        --swarm-master \
+        --swarm-discovery="consul://$(docker-machine ip consul):8500" \
+        --engine-opt="cluster-store=consul://$(docker-machine ip consul):8500" \
+        --engine-opt="cluster-advertise=eth1:2376" swarm-node-01
+    ```
+
+    Comme vous le voyez, nous précisons l'option `--swarm-discovery`  avec l'IP de notre machine Consul et le port 8500 correspondant à l'API de Consul. Ainsi, Docker Swarm pourra utiliser l'API pour enregistrer les machines du cluster.
+
+    Nous allons maintenant configurer notre environnement pour utiliser cette machine et y installer dessus un container Registrator permettant d'auto-enregistrer les nouveaux services sur Consul.
+
+    Pour ce faire, tapez :
+
+    ```bash
+    $ eval $(docker-machine env swarm-node-01)</pre>
+    ```
+
+    puis :
+
+    ```bash
+    $ docker run -d \
+        --volume=/var/run/docker.sock:/tmp/docker.sock \
+        gliderlabs/registrator \
+        -ip $(docker-machine ip swarm-node-01) \
+        consul://$(docker-machine ip consul):8500
+    ```
+
+    Vous remarquez que nous partageons le socket Docker sur la machine. Cette solution peut être [controversée](https://www.lvh.io/posts/dont-expose-the-docker-socket-not-even-to-a-container.html mais dans le cas de cet article, passons là-dessus. Pour une architecture stable, nous préférerons enregistrer nous-même les services via l'API de Consul.
+    L'option `-ip`  permet de préciser à Registrator l'IP sur laquelle nous voulons accéder aux services, à savoir l'IP de la machine et non pas l'IP interne du container Docker.
+
+    Nous sommes prêts à démarrer notre service HTTP. Celui-ci est une simple image Docker "ekofr/http-ip" qui lance une application HTTP écrite en Go et qui affiche "hello, <ip>" avec l'adresse IP du container courant.
+
+    Pour le besoin de cet article, nous allons également créer un réseau différent entre les deux machines afin d'identifier des adresses IP différentes pour les deux services.
+
+    Créons donc un nouveau réseau pour notre node 01 :
+
+    ```bash
+    $ docker network create \
+        --subnet=172.18.0.0/16 network-node-01
+    ```
+
+    puis utilisez ce réseau sur le container du service HTTP :
+
+    ```bash
+    $ docker run -d \
+        --net network-node-01 \
+        -p 80:8080 \
+        ekofr/http-ip
+    ```
+
+    Avant d'exécuter les mêmes étapes pour créer notre node 02, assurons-nous d'avoir un service fonctionnel :
+
+    ```bash
+    $ curl http://localhost:80
+    hello from 172.18.0.X
+    ```
+
+    ## Troisième machine : Node 02
+
+    Nous allons donc (presque) répéter les étapes du node 01 en changeant quelques valeurs seulement. Créez la machine :
+
+    ```bash
+    $ docker-machine create -d virtualbox \
+        --swarm \
+        --swarm-discovery="consul://$(docker-machine ip consul):8500" \
+        --engine-opt="cluster-store=consul://$(docker-machine ip consul):8500" \
+        --engine-opt="cluster-advertise=eth1:2376" swarm-node-02
+    ```
+
+    Préparez votre environnement pour utiliser cette machine node 02 et installez-y Registrator :
+
+    ```bash
+    $ eval $(docker-machine env swarm-node-02)
+    ```
+
+    ```bash
+    $ docker run -d \
+        --volume=/var/run/docker.sock:/tmp/docker.sock \
+        gliderlabs/registrator \
+        -ip $(docker-machine ip swarm-node-02) \
+        consul://$(docker-machine ip consul):8500
+    ```
+
+    Puis créez un nouveau réseau et lancez le service HTTP avec ce réseau :
+
+    ```bash
+    $ docker network create \
+         --subnet=172.19.0.0/16 network-node-02
+    ```
+
+    ```bash
+    $ docker run -d \
+        --net network-node-02 \
+        -p 80:8080 \
+        ekofr/http-ip
+    ```bash
+
+    Nous voilà prêt à découvrir ce que nous apporte Consul.
+
+    # Requêtes DNS
+
+    Vous pouvez en effet maintenant résoudre votre service `http-ip.service.consul`  en utilisant le serveur DNS apporté par Consul, vous devriez voir vos deux services enregistrés :
+
+    ```bash
+    $ dig @$(docker-machine ip consul) http-ip.service.consul
+
+    ;; QUESTION SECTION:
+    ;http-ip.service.consul. IN A
+
+    ;; ANSWER SECTION:
+    http-ip.service.consul. 0 IN A 192.168.99.100
+    http-ip.service.consul. 0 IN A 192.168.99.102
+    ```
+
+    Autrement dit, un load balancing sera fait sur un de ces deux services lorsque vous chercherez à joindre `http://http-ip.service.consul`.
+    Oui, mais qu'en est-il du côté de la répartition de cette charge ? Pouvons-nous définir une priorité et/ou poids ?
+
+    Malheureusement, la réponse est non, pas pour le moment. Une issue a cependant été ouverte sur Github pour demander le support de celui-ci : [https://github.com/hashicorp/consul/issues/1088](https://github.com/hashicorp/consul/issues/1088){:rel="nofollow noreferrer"}.
+
+    En effet, si nous regardons de plus près l'enregistrement DNS de type `SRV` , voici ce que nous obtenons :
+
+    ```bash
+    $ dig @$(docker-machine ip consul) http-ip.service.consul SRV
+
+    ;; ANSWER SECTION:
+    http-ip.service.consul. 0 IN SRV 1 1 80 c0a86366.addr.dc1.consul.
+    http-ip.service.consul. 0 IN SRV 1 1 80 c0a86364.addr.dc1.consul.
+    ```
+
+    Comme vous pouvez le voir, la priorité et le poids sont tous les deux définis à 1, le load balancing sera donc équilibré entre tous les services.
+
+    Si vous ajoutez l'IP de la machine Consul en tant que serveur DNS sur votre système d'exploitation, vous pourrez donc appeler votre service en HTTP et vous rendre compte plus facilement du load balancing :
+
+    ```bash
+    $ curl http://http-ip.service.consul
+    hello from 172.18.0.2
+
+    $ curl http://http-ip.service.consul
+    hello from 172.19.0.2
+    ```
+
+    Nous avons ici une IP correspondant à chaque service HTTP que nous avons enregistré.
+
+    # Failure detection
+
+    Nous allons maintenant ajouter un Health Check à notre service afin de s'assurer que celui-ci peut être utilisé.
+
+    Nous allons donc commencer par retourner sur notre node 01 et supprimer le container `ekofr/http-ip`  afin de le recréer avec un Health Check :
+
+    ```bash
+    $ eval $(docker-machine env swarm-node-01)
+    ```
+
+    ```bash
+    $ docker kill \
+    $(docker ps -q --filter='ancestor=ekofr/http-ip')
+    ```
+
+    Registrator nous offre des variables d'environnement afin d'ajouter des Health Check de nos containers à Consul, vous pouvez consulter la liste de toutes les variables disponibles ici : [http://gliderlabs.com/registrator/latest/user/backends/#consul](http://gliderlabs.com/registrator/latest/user/backends/#consul){:rel="nofollow noreferrer"}.
+
+    L'idée est pour nous de vérifier que le port 80 répond correctement, nous allons donc ajouter un script exécutant simplement une requête curl. Pour ce faire :
+
+    ```bash
+    $ docker run -d \
+        --net network-node-01 -p 80:8080 \
+        -e SERVICE_CHECK_SCRIPT="curl -s -f http://$(docker-machine ip swarm-node-01)" \
+        -e SERVICE_CHECK_INTERVAL=5s \
+        -e SERVICE_CHECK_TIMEOUT=1s \
+        ekofr/http-ip
+    ```
+
+    Vous pouvez faire de même sur le node 02 (en faisant attention à bien modifier les `node-01`  en `node-02` ) et vous devriez maintenant pouvoir visualiser ces checks sur l'interface Consul :
+
+    ![Consul Infrastructure Schema](/assets/2017-02-22-consul-service-discovery-failure/schema.png)
+
+    De la même façon, vous pouvez également utiliser l'API de Consul afin de vérifier la santé de vos services :
+
+    ```bash
+    $ curl http://$(docker-machine ip consul):8500/v1/health/checks/http-ip
+    [
+      {
+        "Status": "passing",
+        "Output": "hello from 172.18.0.2",
+        "ServiceName": "http-ip",
+      },
+      ...
+    ]
+    ```
+
+    # Conclusion
+
+    Vous pouvez maintenant mettre en place Consul sur vos architectures afin de vous assurer que les services contactés sont bien disponibles mais surtout pouvoir identifier les éventuels problèmes qui peuvent survenir sur vos services.
+    Il est donc important d'ajouter un maximum de checks sur les éléments pouvant rendre vos services indisponibles (vérifier que celui-ci peut bien être contacté, vérifier l'espace disque disponible sur la machine, etc ...).
+
+    Consul est un outil qui s'intègre parfaitement dans vos architectures, grâce à son utilisation très simple et son API complète.
+- title: "Samsung lance une bêta de l'application Linux on Dex"
+  subtitle: "Qui permet de lancer l'OS open source sur un smartphone Android ou une tablette"
+  body: >
+    La console est un composant essentiel pour beaucoup d’applications web. Nous avons pas mal de nouveautés dans cette nouvelle version de Symfony. Je vous présente dans cet article mes préférées et vous mettrai les liens de celles que je ne détaille pas ici à la fin (on est comme ça chez Eleven).
+
+    ## Les alias dans les commandes
+
+    On l’attendait, ils l’ont fait : nous pouvons désormais créer une liste d’alias à nos commandes. Pour cela, rien de plus simple : ajoutez “setAliases” avec en paramètre un tableau de string comportant tous les alias.
+
+    Voici un exemple :
+
+    **ElevenLabsAliasCommand.php** :
+
+    ```php
+    <?php
+
+    namespace AppBundle\Command;
+
+    use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+    use Symfony\Component\Console\Input\InputArgument;
+    use Symfony\Component\Console\Input\InputInterface;
+    use Symfony\Component\Console\Input\InputOption;
+    use Symfony\Component\Console\Output\OutputInterface;
+
+    class ElevenLabsAliasCommand extends ContainerAwareCommand
+    {
+        protected function configure()
+        {
+            $this
+                ->setName('eleven-labs:alias-command')
+                ->setDescription('Test alias command')
+                ->setAliases(['space', 'moon'])
+            ;
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            $output->writeln('Alias command done');
+        }
+
+    }
+    ```
+
+    Voici une petite vidéo pour voir ce que ça rend :
+
+    <script type="text/javascript" src="https://asciinema.org/a/8i85eeqih2rwmccrtab407qtv.js" id="asciicast-8i85eeqih2rwmccrtab407qtv" async></script>
+
+    ## Test des commandes
+
+    Tester des commandes, on sait faire. Mais lorsque dans les commandes nous devons répondre à des questions par des étapes intermédiaires, ça devient plus difficile. Terminé les complications, il suffit de rajouter dans vos tests la méthode "setInputs", avec en paramètre un tableau contenant les réponses à vos étapes.
+    Voici rien que pour vous un exemple très simple :
+
+    **ElevenLabsTestCommand.php** :
+
+    ```php
+    <?php
+
+    namespace AppBundle\Command;
+
+    use Symfony\Bundle\FrameworkBundle\Command\ContainerAwareCommand;
+    use Symfony\Component\Console\Input\InputInterface;
+    use Symfony\Component\Console\Output\OutputInterface;
+    use Symfony\Component\Console\Style\SymfonyStyle;
+    use Symfony\Component\Console\Input\Input;
+
+    class ElevenLabsTestCommand extends ContainerAwareCommand
+    {
+        protected function configure()
+        {
+            $this
+                ->setName('eleven-labs:test-command')
+                ->setDescription('...')
+                ->setAliases(['test']);
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            $io = new SymfonyStyle($input, $output);
+            $firstname = $io->ask('What is your firstname ?');
+            $lastname = $io->ask('Your last name ?');
+
+            $text = $firstname.' '.$lastname.', welcome on board !';
+
+            $output->writeln($text);
+        }
+
+    }
+    ```
+
+    **ElevenLabsTestCommandTest.php** :
+
+    ```php
+    <?php
+
+    namespace AppBundle\Command;
+
+    use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+    use Symfony\Component\Console\Application;
+    use Symfony\Component\Console\Tester\CommandTester;
+
+    class ElevenLabsTestCommandTest extends KernelTestCase
+    {
+        public function testCommand()
+        {
+            $kernel = $this->createKernel();
+            $kernel->boot();
+
+            $application = new Application($kernel);
+            $application->add(new ElevenLabsTestCommand());
+
+            $command = $application->find('eleven-labs:test-command');
+            $commandTester = new CommandTester($command);
+
+            // Ajouter tous les inputs dans l'ordre, ici nous devons mettre un nom et un prénom
+            $commandTester->setInputs(['Niel', 'Armstrong']);
+
+            $commandTester->execute([
+                'command'  => $command->getName(),
+            ]);
+
+            $output = $commandTester->getDisplay();
+
+            // Nous verifions ici que nous avons bien les mêmes input
+            $this->assertContains('Niel Armstrong, welcome on board !', $output);
+        }
+    }
+    ```
+
+    ## Single command application
+
+    Les “**S**ingle **C**ommand **A**pplication” sont possibles sur Symfony, comme vous pouvez le voir dans la [documentation](http://symfony.com/doc/3.1/components/console/single_command_tool.html){:rel="nofollow noreferrer"}.
+    Cette feature améliorée dans la version 3.2 nous permet d’ajouter un booléen à la méthode setDefaultCommand(). C’est grâce à ce booléen que nous pouvons désormais basculer l’application en une SCA.
+
+    Mieux vaut un exemple qu’un long discours, commençons par créer deux simples commandes :
+
+    **Command/EspaceCommand.php :**
+
+    ```php
+    <?php
+    namespace Command;
+    use Symfony\Component\Console\Input\InputInterface;
+    use Symfony\Component\Console\Output\OutputInterface;
+    use Symfony\Component\Console\Command\Command;
+
+
+    class EspaceCommand extends Command
+    {
+        protected function configure()
+        {
+            $this
+                ->setName('espace')
+                ->setDescription('Aller dans l\'espace')
+            ;
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            $output->writeln('Je suis dans l\'espace');
+        }
+    }
+    ```
+
+    **Command/TerreCommand.php :**
+
+    ```php
+    <?php
+    namespace Command;
+
+    use Symfony\Component\Console\Input\InputInterface;
+    use Symfony\Component\Console\Output\OutputInterface;
+    use Symfony\Component\Console\Command\Command;
+
+
+    class TerreCommand extends Command
+    {
+        protected function configure()
+        {
+            $this
+                ->setName('terre')
+                ->setDescription('Redescendre sur terre')
+            ;
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            $output->writeln('Je retourne sur terre');
+        }
+    }
+    ```
+
+    **SingleCommand.php :**
+
+    ```php
+    #!/usr/bin/env php
+    <?php
+
+    require __DIR__.'/vendor/autoload.php';
+
+    use Command\EspaceCommand;
+    use Command\TerreCommand;
+    use Symfony\Component\Console\Application;
+
+    // On initialise les deux commandes
+    $espaceCommand = new EspaceCommand();
+    $terreCommand = new TerreCommand();
+
+    // On créer une nouvelle application, et on lui ajoute nos 2 commandes
+    $application = new Application();
+    $application->add($espaceCommand);
+    $application->add($terreCommand);
+
+    // On met la commande EspaceCommand en par défaut et on ajout un booléen à TRUE
+    $application->setDefaultCommand($espaceCommand->getName(), true);
+
+    $application->run();
+    ```
+
+    Dans le fichier SingleCommand, nous avons rajouté un booléen à true, pour indiquer que nous souhaitons avoir une **SCA**.
+
+    <script type="text/javascript" src="https://asciinema.org/a/ctpdd6v34qfh35try9xtqrrpd.js" id="asciicast-ctpdd6v34qfh35try9xtqrrpd" async></script>
+
+    ## LockableTrait
+
+    Depuis la version 2.6, il est possible de bloquer une commande si la commande est déjà en train de tourner.
+    Voici un petit exemple de comment nous devions faire :
+
+    ```php
+    class LockableCommand extends Command
+    {
+        protected function configure()
+        {
+            // ...
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            $lock = new LockHandler('update:contents');
+            if (!$lock->lock()) {
+                $output->writeln('The command is already running in another process.');
+                return 0;
+            }
+
+            $lock->release();
+        }
+    }
+    ```
+
+    Avec la version 3.2, vous pouvez ajouter le trait directement dans votre commande :
+
+    ```php
+    class LockableCommand extends Command
+    {
+        use LockableTrait;
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+             if (!$this->lock()) {
+                $output->writeln('The command is already running in another process.');
+                return 0;
+             }
+
+             $this->release();
+        }
+    }
+    ```
+
+    ## Hidden et Options multiples
+
+    Une petite nouveauté qui vous permettra de cacher une commande très simplement.
+    Une fois la commande cachée, vous pourrez  toujours la lancer, mais elle n’apparaîtra plus dans la liste de vos commandes :
+
+    ```php
+    class HiddenCommand extends Command
+    {
+        protected function configure()
+        {
+            $this
+                ->setName('hidden')
+                ->hidden(true)
+            ;
+        }
+
+        protected function execute(InputInterface $input, OutputInterface $output)
+        {
+            // your code here
+        }
+    }
+    ```
+
+    Enfin, il est désormais possible de combiner plusieurs options de texte sur le même input, voici un exemple :
+
+    ``` theme:monokai
+    $output->writeln('<fg=green;options=italic,underscore>Texte vert italic et souligné</>');
+    ```
+
+    ## Conclusion
+
+    Voilà, je vous ai montré les nouveautés que je préfère, mais ce ne sont pas les seules, pour voir toute la liste des nouveautés pour le composant console, je vous conseille de suivre ce lien : <http://symfony.com/blog/symfony-3-2-0-released>
+- title: "La Roumanie ordonne à des journalistes d'investigation de révéler leurs sources en vertu du RGPD"
+  subtitle: "Dans un cas de corruption au sommet du pouvoir"
+  body: >
+    ![Swarrot Logo](/assets/2017-01-23-publier-consommer-reessayer-des-messages-rabbitmq/logo.png)
+
+    RabbitMQ est un gestionnaire de queues, permettant d'asynchroniser différents traitements. Si vous n'êtes pas familier avec cet outil, un [article](https://blog.eleven-labs.com/fr/creer-rpc-rabbitmq/){:rel="nofollow noreferrer"} traitant du sujet a déjà été écrit précédemment, je vous invite donc à le lire.
+
+    Ce que j'aimerais vous présenter ici correspond à la mise en place du cycle de vie d'un message, avec une gestion des erreurs. Le tout, en quelques lignes de code.
+
+    Ainsi, nous allons voir ensemble comment configurer son _virtual host_ RabbitMQ, publier un message, le consommer, puis le "rattraper" si ce dernier rencontre une erreur lors de la consommation.
+
+    ## Nos outils
+
+    La solution technique s'organise aurour de deux librairies :
+
+    *   [RabbitMQ Admin Toolkit](https://github.com/odolbeau/rabbit-mq-admin-toolkit){:rel="nofollow noreferrer"} : librairie PHP qui permet d'interagir avec l'API HTTP de notre serveur RabbitMQ pour y créer les _exchanges_, les _queues_...
+    *   [Swarrot](https://github.com/swarrot/swarrot){:rel="nofollow noreferrer"} : librairie PHP qui permet de consommer nos messages.
+
+    Swarrot est compatible avec l'extension amqp de PHP ainsi la librairie [php-amqplib](https://github.com/php-amqplib/php-amqplib). L'extension PHP possède un avantage certain en performances (écrite en C) sur la librairie d'après les [benchmarks](https://odolbeau.fr/blog/benchmark-php-amqp-lib-amqp-extension-swarrot.html). Pour installer l'extension, rendez-vous [ici](https://serverpilot.io/community/articles/how-to-install-the-php-amqp-extension.html){:rel="nofollow noreferrer"}.
+    Le principal concurrent de Swarrot, [RabbitMqBundle](https://github.com/php-amqplib/RabbitMqBundle){:rel="nofollow noreferrer"}, n'est pas compatible avec l'extension PHP, et n'est pas aussi simple dans sa configuration et son utilisation.
+
+    ## Configuration
+
+    Notre première étape va être de créer notre configuration RabbitMQ : notre _exchange_ et notre _queue_.
+
+    La librairie RabbitMQ Admin Toolkit, développée par _[odolbeau](https://github.com/odolbeau){:rel="nofollow noreferrer"},_ permet de configurer notre vhost très simplement. Voici une config très basique déclarant un _exchange _et une _queue_ nous permettant d'envoyer Wilson et ses camarades dans l'espace :
+
+    ```yaml
+    # default_vhost.yml
+    '/':
+        parameters:
+            with_dl: false # If true, all queues will have a dl and the corresponding mapping with the exchange "dl"
+            with_unroutable: false # If true, all exchange will be declared with an unroutable config
+
+        exchanges:
+            default:
+                type: direct
+                durable: true
+
+        queues:
+            send_astronaut_to_space:
+                durable: true
+                bindings:
+                    - exchange: default
+                      routing_key: send_astronaut_to_space
+    ```
+
+    Ici, on demande donc la création d'un _echange_ nommé "default", et d'une _queue_ "send_astronaut_to_space", associé à notre échange par une _routing key_ homonyme.
+    Un _binding_ est une relation entre un _exchange_ et une _queue._
+
+    Lançons la commande pour la création de notre vhost :
+
+    ```bash
+    vendor/bin/rabbit vhost:mapping:create default_vhost.yml --host=127.0.0.1
+    Password?
+    With DL: false
+    With Unroutable: false
+    Create exchange default
+    Create queue send_astronaut_to_space
+    Create binding between exchange default and queue send_astronaut_to_space (with routing_key: send_astronaut_to_space)
+    ```
+
+    En vous connectant sur votre interface RabbitMQ management (ex: http://127.0.0.1:15672/), plusieurs choses apparaissent :
+
+    ![Capture of exchanges created](/assets/2017-01-23-publier-consommer-reessayer-des-messages-rabbitmq/create_exchanges.png)
+
+    En cliquant sur l'onglet _Exchanges_, un exchange _default_ a été créé avec un _binding_ avec notre _queue_, comme indiqué dans la console.
+
+    ![Capture of queues created](/assets/2017-01-23-publier-consommer-reessayer-des-messages-rabbitmq/create_queues.png)
+
+    Si l'on clique maintenant sur _Queues_, _send_astronaut_to_space_ est également présente. Jusqu'à présent, pas de problèmes.
+
+    Passons maintenant à la partie publication et consommation de messages.
+
+    ## Consommation
+
+    La librairie PHP qui va nous aider à consommer et publier nos messages, Swarrot, possède un bundle Symfony, qui va nous permettre de l'utiliser simplement dans notre application : [SwarrotBundle](https://github.com/swarrot/SwarrotBundle){:rel="nofollow noreferrer"}.
+
+    Nous devons donc publier des messages, et ensuite les consommer. Voici comment le faire très simplement.
+
+    Une fois votre bundle installé, il est nécessaire de configurer le bundle :
+
+    ```yaml
+    # app/config/config.yml
+    swarrot:
+        provider: pecl # pecl or amqp_lib
+        connections:
+            rabbitmq:
+                host: '%rabbitmq_host%'
+                port: '%rabbitmq_port%'
+                login: '%rabbitmq_login%'
+                password: '%rabbitmq_password%'
+                vhost: '/'
+        consumers:
+            send_astronaut_to_space: # name of the consumer
+                processor: processor.send_astronaut_to_space # name of the service
+                extras:
+                    poll_interval: 500000
+                    requeue_on_error: false
+                middleware_stack:
+                    - configurator: swarrot.processor.exception_catcher
+                    - configurator: swarrot.processor.ack
+    ```
+
+    Voici donc un exemple de configuration. La partie intéressante arrive à partir du paramètre _consumers_.
+
+    Chaque message publié dans un _exchange_ sera acheminé vers une _queue_ en fonction de sa _routing key_. Ainsi, il nous est donc nécessaire de traiter une message stocké dans une _queue_. Dans Swarrot, ce sont les _processors_ qui s'occcupent de cela.
+    Pour consommer notre message, il nous est donc nécessaire de créer notre propre _processor_. Comme indiqué dans la documentation, un _processor_ est simplement un service Symfony qui doit implémenter l'interface _ProcessorInterface_.
+
+    ![Swarrot - Middleware stack](https://camo.githubusercontent.com/8ac89cd415aebfb1026b2278093dbcc986b126da/68747470733a2f2f646f63732e676f6f676c652e636f6d2f64726177696e67732f642f3145615f514a486f2d3970375957386c5f62793753344e494430652d41477058527a7a6974416c59593543632f7075623f773d39363026683d373230){:rel="nofollow noreferrer"}
+
+    La particularité des _processors_ est qu'ils fonctionnent avec des _middlewares_, permettant d'ajouter du comportement avant et/ou après le traitement de notre message (notre processeur). C'est pour cela qu'il y a le paramètre _middleware_stack_, qui contient deux choses : _swarrot.processor.exception_catcher_ et _swarrot.processor.ack_. Bien que facultatifs, ces middlewares apportent une souplesse non négligeable. Nous y reviendrons dans la suite de cet article.
+
+    ```php
+    <?php
+
+    namespace AppBundle\Processor;
+
+    use Swarrot\Broker\Message;
+    use Swarrot\Processor\ProcessorInterface;
+
+    class SendAstronautToSpace implements ProcessorInterface
+    {
+        public function process(Message $message, array $options)
+        {
+            //...
+        }
+    }
+    ```
+
+    Notre _processor_ SendAstronautToSpace implémente la méthode _process_, qui nous permet de récupérer le message à consommer, et l'utiliser dans notre application.
+
+    Nous venons donc de mettre en place la consommation de nos messages. Que nous reste-t-il à faire ? La publication bien sûr !
+
+    ## Publication
+
+    Encore une fois, il est très simple de publier des messages avec Swarrot. Il nous suffit juste de déclarer un _publisher_ dans notre configuration et d'utiliser le service de publication du SwarrotBundle pour publier un nouveau message.
+
+    ```yaml
+    # app/config/config.yml
+        consumers:
+    # ...
+                middleware_stack:
+                    - configurator: swarrot.processor.exception_catcher
+                    - configurator: swarrot.processor.ack
+
+        messages_types:
+            send_astronaut_to_space_publisher:
+                connection: rabbitmq
+                exchange: default
+                routing_key: send_astronaut_to_space
+    ```
+
+    Le secret est de déclarer un nouveau type de message, en spécificant la _connection_, l'_exchange_, et la _routing key_, et de publier un message de cette façon :
+
+    ```php
+    <?php
+
+    $message = new Message('Wilson wants to go to space');
+    $this->get('swarrot.publisher')->publish('send_astronaut_to_space_publisher', $message);
+    ```
+
+    Le service Symfony _swarrot.publisher_ s'occupe ainsi de la publication de notre message. Simple tout cela non ?
+
+    Avec la mise en place des _queues_, la publication, la consommation des messages, la boucle est bouclée.
+
+    ## Gestion des erreurs
+
+    Un dernier aspect que j'aimerai partager avec vous concerne les erreurs lors de la consommation de vos messages.
+
+    Mis à part les problèmes d'implémentation dans votre code, il est possible que vous rencontriez des exceptions, dues à des causes "externes". Par exemple, vous avez un processeur qui doit faire une requête HTTP à un autre service. Ce dernier peut ne pas répondre temporairement, ou être en erreur. Vous avez besoin de publier le message sans que ce dernier ne soit perdu. Ne serait-il pas bien de republier le message si le service ne répond pas, et de le faire après un certain laps de temps ? Faire ce que l'on appelle en anglais un _retry_ ?
+
+    Il m'est arrivé d'être confronté à ces problématiques, nous savions que cela pouvait arriver, et que le non-rattrapage des messages perdus devait se faire automatiquement.
+    Je vais vous montrer comment procéder en gardant l'exemple de _send_astronaut_to_space._ Partons du principe que nous retenterons la publication de notre message au maximum 3 fois. Il nous faut donc créer 3 _queues_ de _retry_. Fort heureusement, la configuration des _queues_ et _exchanges_ de _retry_ est faite très facilement avec la librairie [RabbitMQ Admin Toolkit](https://github.com/odolbeau/rabbit-mq-admin-toolkit){:rel="nofollow noreferrer"}. En effet, il ne suffit que d'une ligne ! Voyons cela plus en détails :
+
+    ```yaml
+    # default_vhost.yml
+    # ...
+    queues:
+        send_astronaut_to_space:
+            durable: true
+            retries: [5, 25, 100] # Create a retry exchange with 3 retry queues prefixed with send_astronaut_to_space
+            bindings:
+                - exchange: default
+                  routing_key: send_astronaut_to_space
+    ```
+
+    Le tableau de paramètres de la clé _retries_ correspondra à la durée à partir de laquelle le message sera republié. Suite au premier échec, 5 secondes s'écouleront avant de republier le message. Puis 25 secondes, et enfin 100 secondes. Ce comportement correspond très bien à la problématique rencontrée.
+
+    Si l'on relance notre commande de création de _vhost_, voici le résultat :
+
+    ```bash
+    vendor/bin/rabbit vhost:mapping:create default_vhost.yml --host=127.0.0.1
+    Password?
+    With DL: false
+    With Unroutable: false
+    Create exchange default
+    Create exchange dl
+    Create queue send_astronaut_to_space
+    Create queue send_astronaut_to_space_dl
+    Create binding between exchange dl and queue send_astronaut_to_space_dl (with routing_key: send_astronaut_to_space)
+    Create queue send_astronaut_to_space_retry_1
+    Create binding between exchange retry and queue send_astronaut_to_space_retry_1 (with routing_key: send_astronaut_to_space_retry_1)
+    Create queue send_astronaut_to_space_retry_2
+    Create binding between exchange retry and queue send_astronaut_to_space_retry_2 (with routing_key: send_astronaut_to_space_retry_2)
+    Create queue send_astronaut_to_space_retry_3
+    Create binding between exchange retry and queue send_astronaut_to_space_retry_3 (with routing_key: send_astronaut_to_space_retry_3)
+    Create binding between exchange default and queue send_astronaut_to_space (with routing_key: send_astronaut_to_space)
+    ```
+
+    On créé l'_exchange_ _default_ comme précédemment. Ensuite, une multitude de nouvelles choses se fait :
+
+    *   Création de l'_exchange dl_ et des _queues __send_astronaut_to_space _et _send_astronaut_to_space_dl_ : nous reviendrons sur ce point plus tard.
+    *   Création de l'_exchange retry_, et de la _queue_ _send_astronaut_to_space_retry_1_, _send_astronaut_to_space_retry_2_ et_ send_astronaut_to_space_retry_3 _: voici toute la partie qui va nous intéresser, l'ensemble des _queues_ qui vont etre utilisées pour le _retry_ de notre message.
+
+    Passons maintenant à la configuration côté consommation.
+
+    Avec Swarrot, la gestion des _retries_ est très facile à mettre en place. Vous vous souvenez des _middlewares_ dont je vous ai parlé plus haut ? Et bien, il existe un _middleware_ pour ça !
+
+    ```yaml
+    # app/config/config.yml
+        consumers:
+    # ...
+                middleware_stack:
+                    - configurator: swarrot.processor.exception_catcher
+                    - configurator: swarrot.processor.ack
+                    - configurator: swarrot.processor.retry
+                      extras:
+                          retry_exchange: 'retry'
+                          retry_attempts: 3
+                          retry_routing_key_pattern: 'send_astronaut_to_space_retry_%%attempt%%'
+
+        messages_types:
+            send_astronaut_to_space_publisher:
+                connection: rabbitmq
+                exchange: default
+                routing_key: send_astronaut_to_space
+    ```
+
+    La différence avec la configuration précédente se situe uniquement au niveau du _middleware_stack_ : on ajoute le processor _swarrot.processor.retry_, ainsi que la configuration de la stratégie de _retry_ :
+
+    *   le nom de l'exchange de _retry_(défini précédemment)
+    *   le nombre de tentatives de republication
+    *   le pattern des _queues_de _retry_
+
+    Le _workflow_ va se faire ainsi : si le message n'est pas _acknowledged_ suite à une exception, la première fois, il va être publié dans l'exchange _retry_, avec la _routing key_ _send_astronaut_to_space_retry_1,_ puis 5 secondes après, republié dans la queue principale _send_astronaut_to_space_. Si le traitement du message rencontre encore une erreur, il va etre publié dans l'_exchange retry_ avec la _routing key_ _send_astronaut_to_space_retry_2_, et au bout de 25 secondes, republié dans la _queue_ principale. Et ainsi de suite.
+
+    ```bash
+    sf swarrot:consume:send_astronaut_to_space send_astronaut_to_space
+    [2017-01-12 12:53:41] app.WARNING: [Retry] An exception occurred. Republish message for the 1 times (key: send_astronaut_to_space_retry_1) {"swarrot_processor":"retry","exception":"[object] (Exception(code: 0): An error occurred while consuming hello at /home/gus/dev/swarrot/src/AppBundle/Processor/SendAstronautToSpace.php:12)"}
+    [2017-01-12 12:53:46] app.WARNING: [Retry] An exception occurred. Republish message for the 2 times (key: send_astronaut_to_space_retry_2) {"swarrot_processor":"retry","exception":"[object] (Exception(code: 0): An error occurred while consuming hello at /home/gus/dev/swarrot/src/AppBundle/Processor/SendAstronautToSpace.php:12)"}
+    [2017-01-12 12:54:11] app.WARNING: [Retry] An exception occurred. Republish message for the 3 times (key: send_astronaut_to_space_retry_3) {"swarrot_processor":"retry","exception":"[object] (Exception(code: 0): An error occurred while consuming hello at /home/gus/dev/swarrot/src/AppBundle/Processor/SendAstronautToSpace.php:12)"}
+    [2017-01-12 12:55:51] app.WARNING: [Retry] Stop attempting to process message after 4 attempts {"swarrot_processor":"retry"}
+    [2017-01-12 12:55:51] app.ERROR: [Ack] An exception occurred. Message #4 has been nack'ed. {"swarrot_processor":"ack","exception":"[object] (Exception(code: 0): An error occurred while consuming hello at /home/gus/dev/swarrot/src/AppBundle/Processor/SendAstronautToSpace.php:12)"}
+    [2017-01-12 12:55:51] app.ERROR: [ExceptionCatcher] An exception occurred. This exception has been caught. {"swarrot_processor":"exception","exception":"[object] (Exception(code: 0): An error occurred while consuming hello at /home/gus/dev/swarrot/src/AppBundle/Processor/SendAstronautToSpace.php:12)"}
+    ```
+
+    Dans la création de notre _virtual host_, nous avons vu qu'un exchange _dl_ ainsi qu'une queue _send_astronaut_to_space_dl_ ont été créés. Cette queue va être la dernière étape dans le cas où notre message rencontre toujours une erreur.
+    Si l'on regarde les détails de la queue _send_astronaut_to_space_, on voit que "_x-dead-letter-exchange_" a pour valeur "_dl_", et que "_x-dead-letter-routing-key_" a pour valeur "_send_astronaut_to_space_", correspondant à notre _binding_ précédemment expliqué.
+
+    À chaque erreur rencontrée par notre _processor_, le _retryProcessor_ va catcher cette erreur, et republier notre message dans la _queue_ de _retry_ autant de fois qu'on l'a configuré. Puis, Swarrot va laisser le champ libre à RabbitMQ pour router le message dans la queue _send_astronaut_to_space_dl._
+
+    ## Conclusion
+
+    Swarrot est une librairie qui vous permet de consommer et publier des messages de manière très simple. Son système de _middleware_ vous permet d'accroitre les possibilités de consommation de vos messages.
+    Couplé au RabbitMQ Admin Toolkit pour configurer vos _exchanges_ et _queues_, Swarrot vous permettra également de rattraper vos messages perdus très facilement.
+
+    ## Références
+
+    *   [RabbitMQ Admin Toolkit](https://github.com/odolbeau/rabbit-mq-admin-toolkit){:rel="nofollow noreferrer"}
+    *   [Swarrot](https://github.com/swarrot/swarrot){:rel="nofollow noreferrer"}
