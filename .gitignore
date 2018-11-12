@@ -17,7 +17,7 @@
 # Custom
 .idea
 .php_cs.cache
-data
+.data
 
 ###> symfony/webpack-encore-pack ###
 /node_modules/

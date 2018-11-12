@@ -56,6 +56,6 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - "./data/db/mysql:/var/lib/mysql"
+      - "./.data/db/mysql:/var/lib/mysql"
     env_file:
       - ${ENV_FILE_DIR}
