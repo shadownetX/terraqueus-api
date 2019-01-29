@@ -1,12 +1,13 @@
 FROM composer:latest as composer
-FROM php:7.2-fpm-alpine
+FROM php:7.3-fpm-alpine
 
 RUN apk add --no-cache --virtual persistent-deps \
         icu-libs \
-        zlib \
         pcre-dev \
         shadow \
-        tzdata
+        tzdata \
+        libzip-dev \
+        zlib
 
 RUN apk add --no-cache --virtual \
         build-deps \
@@ -15,21 +16,21 @@ RUN apk add --no-cache --virtual \
         zlib-dev
 
 RUN docker-php-ext-install \
-        opcache \
-        intl \
+        #opcache \
         zip \
+        intl \
         mysqli \
         pdo \
         pdo_mysql
 
-RUN pecl install \
-        apcu \
-        xdebug
+#RUN pecl install \
+#        apcu \
+#        xdebug-2.7.0beta1
 
-RUN docker-php-ext-enable \
-        opcache \
-        apcu \
-        xdebug
+#RUN docker-php-ext-enable \
+#        opcache \
+#        apcu \
+#        xdebug
 
 
 RUN apk del build-deps && \

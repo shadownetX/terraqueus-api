@@ -11,8 +11,8 @@ COPY nginx.conf /etc/nginx/nginx.conf
 COPY api.conf /etc/nginx/conf.d/api.conf
 
 # Nginx SSL
-COPY ssl/api.trqs.crt /etc/nginx/ssl/api.trqs.crt
-COPY ssl/api.trqs.key /etc/nginx/ssl/api.trqs.key
+COPY ssl/www.api.trqs.cert /etc/nginx/ssl/www.api.trqs.crt
+COPY ssl/www.api.trqs.key /etc/nginx/ssl/www.api.trqs.key
 
 # Connect nginx with php-fpm
 RUN echo "upstream php-upstream { server php:9000; }" > /etc/nginx/conf.d/upstream.conf

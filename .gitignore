@@ -18,6 +18,7 @@
 .idea
 .php_cs.cache
 .data
+docker/nginx/ssl
 
 ###> symfony/webpack-encore-pack ###
 /node_modules/
