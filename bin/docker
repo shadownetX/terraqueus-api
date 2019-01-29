@@ -50,7 +50,6 @@ install ()
 
     $DOCKER_COMPOSE exec -T php chmod 777 -R /var/www/var/log
     $DOCKER_COMPOSE exec -T php chmod 777 -R /var/www/var/cache
-    $DOCKER_COMPOSE exec -T php chmod 777 -R .data
 
     echo ""
     echo " [OK] Fix permissions"
