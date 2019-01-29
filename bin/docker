@@ -72,7 +72,7 @@ install ()
     $DOCKER_COMPOSE exec -T --user www-data php bin/console doctrine:fixtures:load
 
     echo ""
-    echo "[OK] Load fixtures"
+    echo "[OK] Display containers"
     echo ""
 
     $DOCKER_COMPOSE ps
