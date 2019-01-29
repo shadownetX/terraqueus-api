@@ -14,7 +14,7 @@
 * **[nginx:1.15-alpine]** :  Use ```https://www.api.trqs:8443``` with this configuration : ```sudo sh -c "echo '127.0.0.1   www.api.trqs' >> /etc/hosts"```
 * **[php:7.2-fpm-alpine]** 
 * **[redis:4-alpine]** Check "About: Redis" section.
-* **[mysql:5.7]**
+* **[mysql:8]**
 
 ### Manipulate containers
 
