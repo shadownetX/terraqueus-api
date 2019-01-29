@@ -50,6 +50,7 @@ install ()
 
     $DOCKER_COMPOSE exec -T php chmod 777 -R /var/www/var/log
     $DOCKER_COMPOSE exec -T php chmod 777 -R /var/www/var/cache
+    $DOCKER_COMPOSE exec -T php chmod 777 -R .data
 
     echo ""
     echo " [OK] Fix permissions"
@@ -72,7 +73,7 @@ install ()
     $DOCKER_COMPOSE exec -T --user www-data php bin/console doctrine:fixtures:load
 
     echo ""
-    echo "[OK] Load fixtures"
+    echo "[OK] Display containers"
     echo ""
 
     $DOCKER_COMPOSE ps
